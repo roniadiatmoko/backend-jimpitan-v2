@@ -11,7 +11,7 @@ const {
   hapusDanSimpanJimpitanHarian,
   ambilLaporanHarian,
 } = require("./db");
-const { startBot, kirimLaporanWhatsApp } = require("./bailey");
+const { startBot, kirimLaporanWhatsApp, onBotReady } = require("./bailey");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -69,10 +69,11 @@ app.post("/api/jimpitan", async (req, res) => {
       startBot();
       isBotStarted = true;
 
-      // Wait a moment for bot to initialize before sending message
-      setTimeout(async () => {
+      // Wait for bot to be actually ready before sending message
+      onBotReady(async () => {
+        console.log(">>> Bot is ready, sending WhatsApp message...");
         await kirimLaporanWhatsApp(tanggal);
-      }, 3000);
+      });
     } else {
       // Bot already started, send message immediately
       await kirimLaporanWhatsApp(tanggal);

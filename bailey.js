@@ -14,6 +14,17 @@ const msgRetryCounterCache = new NodeCache();
 const logger = pino({ level: "info" }); // Aktifkan log pino agar terlihat prosesnya
 
 let sock;
+let isConnected = false;
+let connectionCallbacks = [];
+
+// Function to notify when bot is ready
+function onBotReady(callback) {
+  if (isConnected) {
+    callback();
+  } else {
+    connectionCallbacks.push(callback);
+  }
+}
 
 // Fungsi untuk memulai koneksi ke WhatsApp
 async function startBot() {
@@ -46,6 +57,7 @@ async function startBot() {
     }
 
     if (connection === "close") {
+      isConnected = false;
       const shouldReconnect = lastDisconnect.error?.output?.statusCode !== 401;
       console.log(
         "Koneksi terputus. Mencoba terhubung kembali...",
@@ -55,7 +67,12 @@ async function startBot() {
         startBot();
       }
     } else if (connection === "open") {
+      isConnected = true;
       console.log("Koneksi berhasil! Bot siap digunakan.");
+      
+      // Trigger all waiting callbacks
+      connectionCallbacks.forEach(callback => callback());
+      connectionCallbacks = [];
     }
   });
 
@@ -137,4 +154,5 @@ async function kirimLaporanWhatsApp(tanggal) {
 module.exports = {
   startBot,
   kirimLaporanWhatsApp,
+  onBotReady,
 };
