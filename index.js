@@ -33,6 +33,18 @@ app.get("/ping", (req, res) => {
   res.status(200).send("Server is alive!");
 });
 
+function keepAlive() {
+  const url = `http://0.0.0.0:${PORT}/ping`;
+
+  setInterval(() => {
+    require('https').get(url, (res) => {
+      console.log('>>> Keep-alive ping sent, status:', res.statusCode);
+    }).on('error', (err) => {
+      console.log('>>> Keep-alive ping failed:', err.message);
+    });
+  }, 5 * 60 * 1000); // Ping every 5 minutes
+}
+
 // Endpoint untuk mengambil semua data
 app.get("/api/jimpitan", async (req, res) => {
   try {
@@ -112,4 +124,6 @@ app.listen(PORT, "0.0.0.0", () => {
 
   // Memulai bot WhatsApp
   startBot();
+
+  keepAlive();
 });
