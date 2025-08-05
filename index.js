@@ -36,13 +36,18 @@ app.get("/ping", (req, res) => {
 function keepAlive() {
   const url = `http://0.0.0.0:${PORT}/ping`;
 
-  setInterval(() => {
-    require('https').get(url, (res) => {
-      console.log('>>> Keep-alive ping sent, status:', res.statusCode);
-    }).on('error', (err) => {
-      console.log('>>> Keep-alive ping failed:', err.message);
-    });
-  }, 5 * 60 * 1000); // Ping every 5 minutes
+  setInterval(
+    () => {
+      require("http")
+        .get(url, (res) => {
+          console.log(">>> Keep-alive ping sent, status:", res.statusCode);
+        })
+        .on("error", (err) => {
+          console.log(">>> Keep-alive ping failed:", err.message);
+        });
+    },
+    5 * 60 * 1000,
+  ); // Ping every 5 minutes
 }
 
 // Endpoint untuk mengambil semua data
@@ -89,23 +94,19 @@ app.get("/api/laporan/:tanggal", async (req, res) => {
     // Validasi format tanggal (misal: YYYY-MM-DD)
     const parsedDate = parse(tanggal, "yyyy-MM-dd", new Date());
     if (!isValid(parsedDate)) {
-      return res
-        .status(400)
-        .json({
-          status: "ERROR",
-          message: "Format tanggal tidak valid. Gunakan YYYY-MM-DD.",
-        });
+      return res.status(400).json({
+        status: "ERROR",
+        message: "Format tanggal tidak valid. Gunakan YYYY-MM-DD.",
+      });
     }
 
     const laporan = await ambilLaporanHarian(tanggal);
 
     if (laporan.laporan.length === 0) {
-      return res
-        .status(404)
-        .json({
-          status: "NOT_FOUND",
-          message: `Data untuk tanggal ${tanggal} tidak ditemukan.`,
-        });
+      return res.status(404).json({
+        status: "NOT_FOUND",
+        message: `Data untuk tanggal ${tanggal} tidak ditemukan.`,
+      });
     }
 
     res.json({ status: "OK", data: laporan });
