@@ -33,22 +33,7 @@ app.get("/ping", (req, res) => {
   res.status(200).send("Server is alive!");
 });
 
-function keepAlive() {
-  const url = `http://0.0.0.0:${PORT}/ping`;
-
-  setInterval(
-    () => {
-      require("http")
-        .get(url, (res) => {
-          console.log(">>> Keep-alive ping sent, status:", res.statusCode);
-        })
-        .on("error", (err) => {
-          console.log(">>> Keep-alive ping failed:", err.message);
-        });
-    },
-    5 * 60 * 1000,
-  ); // Ping every 5 minutes
-}
+// keepAlive function removed - using external UptimeRobot instead
 
 // Endpoint untuk mengambil semua data
 app.get("/api/jimpitan", async (req, res) => {
@@ -67,8 +52,6 @@ let isBotStarted = false;
 app.post("/api/jimpitan", async (req, res) => {
   try {
     const { secret_key, tanggal, diambil_oleh, data } = req.body;
-
-    startBot();
 
     if (secret_key !== "rahasiakita123") {
       return res.status(401).json({ status: "UNAUTHORIZED" });
@@ -138,9 +121,5 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(
     `Endpoint Laporan: http://0.0.0.0:${PORT}/api/laporan/2025-08-04`,
   );
-
-  // Memulai bot WhatsApp
-  // startBot();
-
-  keepAlive();
+  console.log(">>> WhatsApp bot will start on-demand when first POST request is received");
 });
