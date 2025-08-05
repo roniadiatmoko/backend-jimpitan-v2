@@ -61,10 +61,14 @@ app.get("/api/jimpitan", async (req, res) => {
   }
 });
 
+let isBotStarted = false;
+
 // Endpoint untuk menyimpan data
 app.post("/api/jimpitan", async (req, res) => {
   try {
     const { secret_key, tanggal, diambil_oleh, data } = req.body;
+
+    startBot();
 
     if (secret_key !== "rahasiakita123") {
       return res.status(401).json({ status: "UNAUTHORIZED" });
@@ -76,8 +80,20 @@ app.post("/api/jimpitan", async (req, res) => {
 
     await hapusDanSimpanJimpitanHarian(tanggal, diambil_oleh, data);
 
-    // Panggil fungsi untuk mengirim laporan setelah data disimpan
-    await kirimLaporanWhatsApp(tanggal);
+    // Start WhatsApp bot only when needed (first POST request)
+    if (!isBotStarted) {
+      console.log(">>> Starting WhatsApp bot for first time...");
+      startBot();
+      isBotStarted = true;
+
+      // Wait a moment for bot to initialize before sending message
+      setTimeout(async () => {
+        await kirimLaporanWhatsApp(tanggal);
+      }, 3000);
+    } else {
+      // Bot already started, send message immediately
+      await kirimLaporanWhatsApp(tanggal);
+    }
 
     res.json({ status: "OK", total: data.length });
   } catch (err) {
@@ -124,7 +140,7 @@ app.listen(PORT, "0.0.0.0", () => {
   );
 
   // Memulai bot WhatsApp
-  startBot();
+  // startBot();
 
   keepAlive();
 });
