@@ -83,7 +83,7 @@ app.post("/api/jimpitan", async (req, res) => {
     // Start WhatsApp bot only when needed (first POST request)
     if (!isBotStarted) {
       console.log(">>> Starting WhatsApp bot for first time...");
-      startBot();
+      // startBot();
       isBotStarted = true;
 
       // Wait a moment for bot to initialize before sending message
