@@ -191,6 +191,18 @@ app.post("/api/rapel", async (req, res) => {
   }
 });
 
+// Endpoint baru untuk mengambil status rapel harian
+app.get("/api/rapel-harian/:tanggal", async (req, res) => {
+  try {
+    const { tanggal } = req.params;
+    const rapelHouses = await ambilRapelHarian(tanggal);
+    res.json({ status: "OK", rapelHouses });
+  } catch (err) {
+    console.error("Error saat mengambil status rapel harian:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server berjalan di http://0.0.0.0:${PORT}`);
   console.log(`Endpoint API: http://0.0.0.0:${PORT}/api/jimpitan`);
