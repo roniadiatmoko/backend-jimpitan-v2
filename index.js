@@ -1,5 +1,5 @@
 // index.js
-
+require("dotenv").config(); // Load environment variables from .env file
 const express = require("express");
 const cors = require("cors");
 const bodyParser = require("body-parser");
@@ -11,7 +11,7 @@ const {
   hapusDanSimpanJimpitanHarian,
   ambilLaporanHarian,
 } = require("./db");
-const { startBot, kirimLaporanWhatsApp, onBotReady } = require("./bailey");
+const { startBot, kirimTesWhatsApp, kirimLaporanWhatsApp, onBotReady } = require("./bailey");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -83,6 +83,21 @@ app.post("/api/jimpitan", async (req, res) => {
   } catch (err) {
     console.error("Error saat menyimpan data jimpitan:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.get("/api/tes-wa", async (req, res) => {
+  if(!isBotStarted) {
+    console.log(">>> Starting WhatsApp bot for test...");
+    startBot();
+    isBotStarted = true;
+
+    // Wait for bot to be actually ready before sending message
+    onBotReady(async () => {
+      console.log(">>> Bot is ready, sending test WhatsApp message...");
+      await kirimTesWhatsApp("Test message from Jimpitan server");
+      res.json({ status: "OK", message: "Test message sent successfully." });
+    });
   }
 });
 

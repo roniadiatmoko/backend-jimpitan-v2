@@ -96,6 +96,30 @@ async function startBot() {
   });
 }
 
+async function kirimTesWhatsApp(message) {
+  try {
+    if (!sock || !sock.user) {
+      console.log(
+        "Bot WhatsApp belum terhubung. Silakan scan QR code terlebih dahulu.",
+      );
+      return;
+    }
+
+    const groupId = process.env.GROUP_ID;
+    if (!groupId) {
+      console.error(
+        "Environment variable GROUP_ID tidak ditemukan. Mohon tambahkan di Replit Secrets.",
+      );
+      return;
+    }
+
+    await sock.sendMessage(groupId, { text: message });
+    console.log("Pesan WhatsApp berhasil dikirim!");
+  } catch (error) {
+    console.error("Gagal mengirim pesan WhatsApp:", error);
+  }
+}
+
 // Fungsi utama yang akan dipanggil dari index.js untuk mengirim laporan
 async function kirimLaporanWhatsApp(tanggal) {
   try {
@@ -153,6 +177,7 @@ async function kirimLaporanWhatsApp(tanggal) {
 // Ekspor fungsi
 module.exports = {
   startBot,
+  kirimTesWhatsApp,
   kirimLaporanWhatsApp,
   onBotReady,
 };
