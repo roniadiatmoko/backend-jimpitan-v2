@@ -105,7 +105,7 @@ async function kirimTesWhatsApp(message) {
       return;
     }
 
-    const groupId = process.env.GROUP_ID;
+    const groupId = process.env.GROUP_ID_TESTING;
     if (!groupId) {
       console.error(
         "Environment variable GROUP_ID tidak ditemukan. Mohon tambahkan di Replit Secrets.",

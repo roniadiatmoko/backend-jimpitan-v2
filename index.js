@@ -10,8 +10,16 @@ const {
   ambilSemuaData,
   hapusDanSimpanJimpitanHarian,
   ambilLaporanHarian,
+  simpanRapelHarian,
+  ambilTanggalJimpitanKosong,
+  ambilTanggalRapelTerisi
 } = require("./db");
-const { startBot, kirimTesWhatsApp, kirimLaporanWhatsApp, onBotReady } = require("./bailey");
+const {
+  startBot,
+  kirimTesWhatsApp,
+  kirimLaporanWhatsApp,
+  onBotReady,
+} = require("./bailey");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -87,18 +95,14 @@ app.post("/api/jimpitan", async (req, res) => {
 });
 
 app.get("/api/tes-wa", async (req, res) => {
-  if(!isBotStarted) {
-    console.log(">>> Starting WhatsApp bot for test...");
-    startBot();
-    isBotStarted = true;
+  console.log(">>> Menerima permintaan tes WhatsApp...");
+  startBot(); // Ensure bot is started
+  console.log(">>> Bot is ready, sending test WhatsApp message...");
+  onBotReady(async () => {
+    await kirimTesWhatsApp("Test message from Jimpitan server");
 
-    // Wait for bot to be actually ready before sending message
-    onBotReady(async () => {
-      console.log(">>> Bot is ready, sending test WhatsApp message...");
-      await kirimTesWhatsApp("Test message from Jimpitan server");
-      res.json({ status: "OK", message: "Test message sent successfully." });
-    });
-  }
+  });
+  res.json({ status: "OK", message: "Tes dimulai, cek whatsapp" });
 });
 
 // --- FUNGSI BARU: Endpoint untuk mengambil laporan harian berdasarkan tanggal ---
@@ -131,11 +135,63 @@ app.get("/api/laporan/:tanggal", async (req, res) => {
   }
 });
 
+// --- FUNGSI BARU: Endpoint POST untuk fitur rapel ---
+app.post("/api/rapel", async (req, res) => {
+  try {
+    const { secret_key, nomor_rumah, nominal } = req.body;
+
+    if (secret_key !== "rahasiakita123") {
+      return res.status(401).json({ status: "UNAUTHORIZED" });
+    }
+
+    const nominalPerDay = 500;
+    const hariRapel = Math.floor(nominal / nominalPerDay);
+
+    if (hariRapel <= 0) {
+      return res.status(400).json({ status: "ERROR", message: "Nominal tidak mencukupi untuk 1 hari jimpitan." });
+    }
+    
+    const bulanSekarang = moment().tz("Asia/Jakarta").format('YYYY-MM');
+
+    // 1. Ambil daftar tanggal jimpitan yang kosong di bulan ini
+    const tanggalJimpitanKosong = await ambilTanggalJimpitanKosong(nomor_rumah, bulanSekarang);
+    
+    // 2. Ambil daftar tanggal yang sudah dirapel di bulan ini
+    const tanggalRapelTerisi = await ambilTanggalRapelTerisi(nomor_rumah, bulanSekarang);
+    
+    // 3. Gabungkan kedua daftar untuk menemukan hari yang benar-benar kosong
+    const hariUntukDirapel = tanggalJimpitanKosong.filter(tanggal => !tanggalRapelTerisi.includes(tanggal));
+    
+    // 4. Batasi jumlah hari rapel sesuai nominal
+    const tanggalYangDisimpan = hariUntukDirapel.slice(0, hariRapel);
+
+    if (tanggalYangDisimpan.length === 0) {
+      return res.status(404).json({ status: "NOT_FOUND", message: `Tidak ada hari jimpitan kosong untuk rumah ${nomor_rumah} di bulan ini.` });
+    }
+    
+    // 5. Simpan setiap tanggal ke database
+    const promises = tanggalYangDisimpan.map(tanggal => simpanRapelHarian(nomor_rumah, tanggal));
+    await Promise.all(promises);
+
+    res.json({ 
+      status: "OK", 
+      message: `Berhasil mencatat rapel ${tanggalYangDisimpan.length} hari untuk rumah ${nomor_rumah}.`,
+      hariYangDisimpan: tanggalYangDisimpan
+    });
+
+  } catch (err) {
+    console.error("Error saat mencatat rapel:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server berjalan di http://0.0.0.0:${PORT}`);
   console.log(`Endpoint API: http://0.0.0.0:${PORT}/api/jimpitan`);
   console.log(
-    `Endpoint Laporan: http://0.0.0.0:${PORT}/api/laporan/2025-08-04`,
+    `Endpoint Laporan: http://0.0.0.0:${PORT}/api/laporan/2025-08-04`
   );
-  console.log(">>> WhatsApp bot will start on-demand when first POST request is received");
+  console.log(
+    ">>> WhatsApp bot will start on-demand when first POST request is received"
+  );
 });

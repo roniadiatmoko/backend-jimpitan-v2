@@ -5,6 +5,7 @@ const db = new sqlite3.Database("./db.sqlite");
 
 // Buat tabel jika belum ada
 db.serialize(() => {
+  //table jimpitan
   db.run(`
     CREATE TABLE IF NOT EXISTS jimpitan (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,6 +17,13 @@ db.serialize(() => {
       waktu_input TEXT
     )
   `);
+
+  //table rapel
+  db.run(`
+    CREATE TABLE IF NOT EXISTS rapel (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nomor_rumah TEXT,
+      tanggal TEXT`);
 });
 
 // FUNGSI UTAMA: Hapus data untuk tanggal tertentu, lalu masukkan data baru
@@ -51,7 +59,7 @@ function hapusDanSimpanJimpitanHarian(tanggal, diambil_oleh, data) {
               (err) => {
                 if (err) rej(err);
                 else res();
-              },
+              }
             );
           });
         });
@@ -70,40 +78,126 @@ function hapusDanSimpanJimpitanHarian(tanggal, diambil_oleh, data) {
   });
 }
 
-// FUNGSI BARU: Mengambil laporan harian berdasarkan tanggal
+// FUNGSI BARU: Mengambil laporan harian dengan status gabungan (terisi, rapel, kosong)
 function ambilLaporanHarian(tanggal) {
   return new Promise((resolve, reject) => {
-    // Mengambil semua data untuk tanggal yang spesifik
-    db.all(
-      "SELECT nomor_rumah, nama_pengisi, jumlah FROM jimpitan WHERE tanggal = ? ORDER BY nomor_rumah ASC",
-      [tanggal],
-      (err, rows) => {
-        if (err) {
-          reject(err);
-        } else {
-          const totalTerisi = rows.filter((row) => row.jumlah === 1).length;
-          const totalTidakTerisi = rows.filter(
-            (row) => row.jumlah === 0,
-          ).length;
-          const totalUang = totalTerisi * 500;
+    // 1. Ambil data jimpitan untuk tanggal tersebut
+    const jimpitanPromise = new Promise((res, rej) => {
+      db.all("SELECT nomor_rumah, nama_pengisi, jumlah FROM jimpitan WHERE tanggal = ?", [tanggal], (err, rows) => {
+        if (err) rej(err);
+        else res(rows);
+      });
+    });
 
-          // Mengemas data menjadi format yang lebih rapi untuk laporan
-          const laporan = rows.map((row) => ({
+    // 2. Ambil data rapel untuk tanggal tersebut
+    const rapelPromise = new Promise((res, rej) => {
+      db.all("SELECT nomor_rumah FROM rapel WHERE tanggal_rapel = ?", [tanggal], (err, rows) => {
+        if (err) rej(err);
+        else res(rows.map(row => row.nomor_rumah));
+      });
+    });
+
+    Promise.all([jimpitanPromise, rapelPromise])
+      .then(([jimpitanRows, rapelRows]) => {
+        let totalTerisi = 0;
+        let totalRapel = 0;
+        let totalTidakTerisi = 0;
+
+        // Buat objek untuk pencarian cepat dan menggabungkan data
+        const laporanMap = new Map();
+        const rapelSet = new Set(rapelRows);
+
+        // Proses data jimpitan terlebih dahulu
+        jimpitanRows.forEach(row => {
+          const status_terisi = row.jumlah === 1 ? "Terisi" : (rapelSet.has(row.nomor_rumah) ? "Rapel" : "Kosong");
+          laporanMap.set(row.nomor_rumah, {
             nomor_rumah: row.nomor_rumah,
             nama_pengisi: row.nama_pengisi,
-            status_terisi: row.jumlah === 1 ? "Terisi" : "Kosong",
-          }));
-
-          resolve({
-            tanggal: tanggal,
-            laporan: laporan,
-            totalTerisi: totalTerisi,
-            totalTidakTerisi: totalTidakTerisi,
-            totalUang: totalUang,
+            status_terisi: status_terisi
           });
-        }
-      },
+        });
+        
+        // Proses data rapel untuk rumah yang tidak ada di jimpitan
+        rapelRows.forEach(nomor_rumah => {
+          if (!laporanMap.has(nomor_rumah)) {
+            laporanMap.set(nomor_rumah, {
+              nomor_rumah: nomor_rumah,
+              nama_pengisi: "-",
+              status_terisi: "Rapel"
+            });
+          }
+        });
+
+        // Mengonversi Map menjadi array laporan dan menghitung total
+        const laporan = Array.from(laporanMap.values());
+        laporan.forEach(item => {
+          if (item.status_terisi === "Terisi") totalTerisi++;
+          else if (item.status_terisi === "Rapel") totalRapel++;
+          else if (item.status_terisi === "Kosong") totalTidakTerisi++;
+        });
+
+        const totalUang = (totalTerisi + totalRapel) * 500;
+
+        resolve({
+          tanggal,
+          laporan,
+          totalTerisi,
+          totalRapel,
+          totalTidakTerisi,
+          totalUang,
+        });
+      })
+      .catch(reject);
+  });
+}
+
+//simpan rapel harian
+function simpanRapelHarian(nomor_rumah, tanggal) {
+  return new Promise((resolve, reject) => {
+    const stmt = db.prepare(
+      "INSERT INTO rapel (nomor_rumah, tanggal_rapel) VALUES (?, ?)"
     );
+    stmt.run([nomor_rumah, tanggal], (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+    stmt.finalize();
+  });
+}
+
+//ambil rapel harian
+function ambilRapelHarian(tanggal) {
+  return new Promise((resolve, reject) => {
+    db.all(
+      "SELECT nomor_rumah FROM rapel WHERE tanggal_rapel = ?",
+      [tanggal],
+      (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows.map((row) => row.nomor_rumah));
+      }
+    );
+  });
+}
+
+// FUNGSI BARU: Mengambil tanggal yang belum terisi jimpitan di bulan ini
+function ambilTanggalJimpitanKosong(nomor_rumah, bulan) {
+  return new Promise((resolve, reject) => {
+    // Mengambil semua tanggal di bulan ini di mana rumah tersebut TIDAK membayar
+    // SUBSTR(tanggal, 1, 7) untuk mengambil 'YYYY-MM'
+    db.all("SELECT tanggal FROM jimpitan WHERE nomor_rumah = ? AND jumlah = 0 AND SUBSTR(tanggal, 1, 7) = ?", [nomor_rumah, bulan], (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows.map(row => row.tanggal));
+    });
+  });
+}
+
+// FUNGSI BARU: Mengambil semua tanggal rapel untuk rumah tertentu di bulan ini
+function ambilTanggalRapelTerisi(nomor_rumah, bulan) {
+  return new Promise((resolve, reject) => {
+    db.all("SELECT tanggal_rapel FROM rapel WHERE nomor_rumah = ? AND SUBSTR(tanggal_rapel, 1, 7) = ?", [nomor_rumah, bulan], (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows.map(row => row.tanggal_rapel));
+    });
   });
 }
 
@@ -114,7 +208,7 @@ function ambilSemuaData() {
       (err, rows) => {
         if (err) reject(err);
         else resolve(rows);
-      },
+      }
     );
   });
 }
@@ -123,5 +217,7 @@ module.exports = {
   db,
   ambilSemuaData,
   hapusDanSimpanJimpitanHarian,
-  ambilLaporanHarian, // Ekspor fungsi baru
+  ambilLaporanHarian,
+  simpanRapelHarian,
+  ambilRapelHarian,
 };
