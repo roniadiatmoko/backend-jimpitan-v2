@@ -2,6 +2,8 @@
 
 const sqlite3 = require("sqlite3").verbose();
 const db = new sqlite3.Database("./db.sqlite");
+const { format, lastDayOfMonth } = require("date-fns");
+const { id } = require("date-fns/locale");
 
 // Buat tabel jika belum ada
 db.serialize(() => {
@@ -168,7 +170,7 @@ function ambilLaporanHarian(tanggal) {
 function simpanRapelHarian(nomor_rumah, tanggal) {
   return new Promise((resolve, reject) => {
     const stmt = db.prepare(
-      "INSERT INTO rapel (nomor_rumah, tanggal) VALUES (?, ?)",
+      "INSERT OR IGNORE INTO rapel (nomor_rumah, tanggal) VALUES (?, ?)",
     );
     stmt.run([nomor_rumah, tanggal], (err) => {
       if (err) reject(err);
@@ -192,13 +194,50 @@ function ambilRapelHarian(tanggal) {
   });
 }
 
-// FUNGSI BARU: Mengambil tanggal yang belum terisi jimpitan di bulan ini
+/**
+ * FUNGSI BARU: Mengambil tanggal yang belum terisi jimpitan di bulan ini
+ * @param {number} nomor_rumah - Nomor rumah yang dicek.
+ * @param {string} bulan - Bulan dalam format 'YYYY-MM'.
+ * @returns {Promise<Array<string>>} - Array tanggal yang belum terisi jimpitan.
+ */
 function ambilTanggalJimpitanKosong(nomor_rumah, bulan) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const terisi = await ambilTanggalJimpitanTerisi(nomor_rumah, bulan);
+      const terisiRapel = await ambilTanggalRapelTerisi(nomor_rumah, bulan);
+
+      // Gabungkan dan hilangkan duplikasi dari tanggal yang terisi jimpitan atau rapel
+      const semuaTerisi = [...new Set([...terisi, ...terisiRapel])];
+
+      const [tahun, bulanStr] = bulan.split("-");
+      const tanggalTerakhir = lastDayOfMonth(new Date(tahun, parseInt(bulanStr) - 1));
+      const semuaTanggalBulanIni = [];
+      for (let d = 1; d <= tanggalTerakhir.getDate(); d++) {
+        semuaTanggalBulanIni.push(format(new Date(tahun, parseInt(bulanStr) - 1, d), "yyyy-MM-dd"));
+      }
+
+      // Filter untuk menemukan tanggal yang belum terisi (kosong)
+      const tanggalKosong = semuaTanggalBulanIni.filter(
+        (tanggal) => !semuaTerisi.includes(tanggal),
+      );
+
+      resolve(tanggalKosong);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+/**
+ * FUNGSI BARU: Mengambil semua tanggal yang sudah terisi jimpitan di bulan ini
+ * @param {number} nomor_rumah - Nomor rumah yang dicek.
+ * @param {string} bulan - Bulan dalam format 'YYYY-MM'.
+ * @returns {Promise<Array<string>>} - Array tanggal yang sudah terisi jimpitan.
+ */
+function ambilTanggalJimpitanTerisi(nomor_rumah, bulan) {
   return new Promise((resolve, reject) => {
-    // Mengambil semua tanggal di bulan ini di mana rumah tersebut TIDAK membayar
-    // SUBSTR(tanggal, 1, 7) untuk mengambil 'YYYY-MM'
     db.all(
-      "SELECT tanggal FROM jimpitan WHERE nomor_rumah = ? AND jumlah = 0 AND SUBSTR(tanggal, 1, 7) = ?",
+      "SELECT tanggal FROM jimpitan WHERE nomor_rumah = ? AND SUBSTR(tanggal, 1, 7) = ?",
       [nomor_rumah, bulan],
       (err, rows) => {
         if (err) reject(err);

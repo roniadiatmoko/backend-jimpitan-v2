@@ -147,6 +147,7 @@ app.post("/api/rapel", async (req, res) => {
 
     const nominalPerDay = 500;
     const hariRapel = Math.floor(nominal / nominalPerDay);
+    console.log('hari rapel:', hariRapel);
 
     if (hariRapel <= 0) {
       return res.status(400).json({ status: "ERROR", message: "Nominal tidak mencukupi untuk 1 hari jimpitan." });
@@ -156,15 +157,19 @@ app.post("/api/rapel", async (req, res) => {
 
     // 1. Ambil daftar tanggal jimpitan yang kosong di bulan ini
     const tanggalJimpitanKosong = await ambilTanggalJimpitanKosong(nomor_rumah, bulanSekarang);
+    console.log('tanggal jimpitan kosong:', tanggalJimpitanKosong);
     
     // 2. Ambil daftar tanggal yang sudah dirapel di bulan ini
     const tanggalRapelTerisi = await ambilTanggalRapelTerisi(nomor_rumah, bulanSekarang);
+    console.log('tanggal rapel terisi:', tanggalRapelTerisi);
     
     // 3. Gabungkan kedua daftar untuk menemukan hari yang benar-benar kosong
     const hariUntukDirapel = tanggalJimpitanKosong.filter(tanggal => !tanggalRapelTerisi.includes(tanggal));
+    console.log('hari untuk dirapel:', hariUntukDirapel);
     
     // 4. Batasi jumlah hari rapel sesuai nominal
     const tanggalYangDisimpan = hariUntukDirapel.slice(0, hariRapel);
+    console.log('tanggal yang disimpan:', tanggalYangDisimpan);
 
     if (tanggalYangDisimpan.length === 0) {
       return res.status(404).json({ status: "NOT_FOUND", message: `Tidak ada hari jimpitan kosong untuk rumah ${nomor_rumah} di bulan ini.` });
