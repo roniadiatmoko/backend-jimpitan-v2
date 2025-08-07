@@ -12,6 +12,7 @@ const {
   hapusDanSimpanJimpitanHarian,
   ambilLaporanHarian,
   simpanRapelHarian,
+  ambilRapelHarian,
   ambilTanggalJimpitanKosong,
   ambilTanggalRapelTerisi
 } = require("./db");
