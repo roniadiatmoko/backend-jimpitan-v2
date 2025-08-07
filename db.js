@@ -151,7 +151,7 @@ function ambilLaporanHarian(tanggal) {
           else if (item.status_terisi === "Kosong") totalTidakTerisi++;
         });
 
-        const totalUang = (totalTerisi + totalRapel) * 500;
+        const totalUang = (totalTerisi) * 500;
 
         resolve({
           tanggal,
