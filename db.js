@@ -241,4 +241,6 @@ module.exports = {
   ambilLaporanHarian,
   simpanRapelHarian,
   ambilRapelHarian,
+  ambilTanggalJimpitanKosong,
+  ambilTanggalRapelTerisi,
 };
