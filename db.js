@@ -96,7 +96,7 @@ function ambilLaporanHarian(tanggal) {
     // 2. Ambil data rapel untuk tanggal tersebut
     const rapelPromise = new Promise((res, rej) => {
       db.all(
-        "SELECT nomor_rumah FROM rapel WHERE tanggal_rapel = ?",
+        "SELECT nomor_rumah FROM rapel WHERE tanggal = ?",
         [tanggal],
         (err, rows) => {
           if (err) rej(err);
@@ -168,7 +168,7 @@ function ambilLaporanHarian(tanggal) {
 function simpanRapelHarian(nomor_rumah, tanggal) {
   return new Promise((resolve, reject) => {
     const stmt = db.prepare(
-      "INSERT INTO rapel (nomor_rumah, tanggal_rapel) VALUES (?, ?)",
+      "INSERT INTO rapel (nomor_rumah, tanggal) VALUES (?, ?)",
     );
     stmt.run([nomor_rumah, tanggal], (err) => {
       if (err) reject(err);
@@ -182,7 +182,7 @@ function simpanRapelHarian(nomor_rumah, tanggal) {
 function ambilRapelHarian(tanggal) {
   return new Promise((resolve, reject) => {
     db.all(
-      "SELECT nomor_rumah FROM rapel WHERE tanggal_rapel = ?",
+      "SELECT nomor_rumah FROM rapel WHERE tanggal = ?",
       [tanggal],
       (err, rows) => {
         if (err) reject(err);
@@ -212,11 +212,11 @@ function ambilTanggalJimpitanKosong(nomor_rumah, bulan) {
 function ambilTanggalRapelTerisi(nomor_rumah, bulan) {
   return new Promise((resolve, reject) => {
     db.all(
-      "SELECT tanggal_rapel FROM rapel WHERE nomor_rumah = ? AND SUBSTR(tanggal_rapel, 1, 7) = ?",
+      "SELECT tanggal FROM rapel WHERE nomor_rumah = ? AND SUBSTR(tanggal, 1, 7) = ?",
       [nomor_rumah, bulan],
       (err, rows) => {
         if (err) reject(err);
-        else resolve(rows.map((row) => row.tanggal_rapel));
+        else resolve(rows.map((row) => row.tanggal));
       },
     );
   });
