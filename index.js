@@ -13,8 +13,9 @@ const {
   ambilLaporanHarian,
   simpanRapelHarian,
   ambilRapelHarian,
+  ambilRapelBulanan,
   ambilTanggalJimpitanKosong,
-  ambilTanggalRapelTerisi
+  ambilTanggalRapelTerisi,
 } = require("./db");
 const {
   startBot,
@@ -102,7 +103,6 @@ app.get("/api/tes-wa", async (req, res) => {
   console.log(">>> Bot is ready, sending test WhatsApp message...");
   onBotReady(async () => {
     await kirimTesWhatsApp("Test message from Jimpitan server");
-
   });
   res.json({ status: "OK", message: "Tes dimulai, cek whatsapp" });
 });
@@ -148,44 +148,59 @@ app.post("/api/rapel", async (req, res) => {
 
     const nominalPerDay = 500;
     const hariRapel = Math.floor(nominal / nominalPerDay);
-    console.log('hari rapel:', hariRapel);
+    console.log("hari rapel:", hariRapel);
 
     if (hariRapel <= 0) {
-      return res.status(400).json({ status: "ERROR", message: "Nominal tidak mencukupi untuk 1 hari jimpitan." });
+      return res.status(400).json({
+        status: "ERROR",
+        message: "Nominal tidak mencukupi untuk 1 hari jimpitan.",
+      });
     }
-    
-    const bulanSekarang = moment().tz("Asia/Jakarta").format('YYYY-MM');
+
+    const bulanSekarang = moment().tz("Asia/Jakarta").format("YYYY-MM");
 
     // 1. Ambil daftar tanggal jimpitan yang kosong di bulan ini
-    const tanggalJimpitanKosong = await ambilTanggalJimpitanKosong(nomor_rumah, bulanSekarang);
-    console.log('tanggal jimpitan kosong:', tanggalJimpitanKosong);
-    
+    const tanggalJimpitanKosong = await ambilTanggalJimpitanKosong(
+      nomor_rumah,
+      bulanSekarang,
+    );
+    console.log("tanggal jimpitan kosong:", tanggalJimpitanKosong);
+
     // 2. Ambil daftar tanggal yang sudah dirapel di bulan ini
-    const tanggalRapelTerisi = await ambilTanggalRapelTerisi(nomor_rumah, bulanSekarang);
-    console.log('tanggal rapel terisi:', tanggalRapelTerisi);
-    
+    const tanggalRapelTerisi = await ambilTanggalRapelTerisi(
+      nomor_rumah,
+      bulanSekarang,
+    );
+    console.log("tanggal rapel terisi:", tanggalRapelTerisi);
+
     // 3. Gabungkan kedua daftar untuk menemukan hari yang benar-benar kosong
-    const hariUntukDirapel = tanggalJimpitanKosong.filter(tanggal => !tanggalRapelTerisi.includes(tanggal));
-    console.log('hari untuk dirapel:', hariUntukDirapel);
-    
+    const hariUntukDirapel = tanggalJimpitanKosong.filter(
+      (tanggal) => !tanggalRapelTerisi.includes(tanggal),
+    );
+    console.log("hari untuk dirapel:", hariUntukDirapel);
+
     // 4. Batasi jumlah hari rapel sesuai nominal
     const tanggalYangDisimpan = hariUntukDirapel.slice(0, hariRapel);
-    console.log('tanggal yang disimpan:', tanggalYangDisimpan);
+    console.log("tanggal yang disimpan:", tanggalYangDisimpan);
 
     if (tanggalYangDisimpan.length === 0) {
-      return res.status(404).json({ status: "NOT_FOUND", message: `Tidak ada hari jimpitan kosong untuk rumah ${nomor_rumah} di bulan ini.` });
+      return res.status(404).json({
+        status: "NOT_FOUND",
+        message: `Tidak ada hari jimpitan kosong untuk rumah ${nomor_rumah} di bulan ini.`,
+      });
     }
-    
+
     // 5. Simpan setiap tanggal ke database
-    const promises = tanggalYangDisimpan.map(tanggal => simpanRapelHarian(nomor_rumah, tanggal));
+    const promises = tanggalYangDisimpan.map((tanggal) =>
+      simpanRapelHarian(nomor_rumah, tanggal),
+    );
     await Promise.all(promises);
 
-    res.json({ 
-      status: "OK", 
+    res.json({
+      status: "OK",
       message: `Berhasil mencatat rapel ${tanggalYangDisimpan.length} hari untuk rumah ${nomor_rumah}.`,
-      hariYangDisimpan: tanggalYangDisimpan
+      hariYangDisimpan: tanggalYangDisimpan,
     });
-
   } catch (err) {
     console.error("Error saat mencatat rapel:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
@@ -204,13 +219,26 @@ app.get("/api/rapel-harian/:tanggal", async (req, res) => {
   }
 });
 
+//Mengambil daftar rapel bulanan
+app.get("/api/rapel-bulanan/:bulan", async (req, res) => {
+  try {
+    const { bulan } = req.params;
+    const rapelBulanan = await ambilRapelBulanan(bulan);
+    console.log(bulan);
+    res.json({ status: "OK", rapelBulanan });
+  } catch (err) {
+    console.error("Error saat mengambil status rapel bulanan:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server berjalan di http://0.0.0.0:${PORT}`);
   console.log(`Endpoint API: http://0.0.0.0:${PORT}/api/jimpitan`);
   console.log(
-    `Endpoint Laporan: http://0.0.0.0:${PORT}/api/laporan/2025-08-04`
+    `Endpoint Laporan: http://0.0.0.0:${PORT}/api/laporan/2025-08-04`,
   );
   console.log(
-    ">>> WhatsApp bot will start on-demand when first POST request is received"
+    ">>> WhatsApp bot will start on-demand when first POST request is received",
   );
 });

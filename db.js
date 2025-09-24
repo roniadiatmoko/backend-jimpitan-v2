@@ -151,7 +151,7 @@ function ambilLaporanHarian(tanggal) {
           else if (item.status_terisi === "Kosong") totalTidakTerisi++;
         });
 
-        const totalUang = (totalTerisi) * 500;
+        const totalUang = totalTerisi * 500;
 
         resolve({
           tanggal,
@@ -194,6 +194,20 @@ function ambilRapelHarian(tanggal) {
   });
 }
 
+//ambil rapel bulanan
+function ambilRapelBulanan(bulan) {
+  return new Promise((resolve, reject) => {
+    db.all(
+      "SELECT nomor_rumah, tanggal FROM rapel WHERE SUBSTR(tanggal, 1, 7) = ?",
+      [bulan],
+      (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      },
+    );
+  });
+}
+
 /**
  * FUNGSI BARU: Mengambil tanggal yang belum terisi jimpitan di bulan ini
  * @param {number} nomor_rumah - Nomor rumah yang dicek.
@@ -210,10 +224,14 @@ function ambilTanggalJimpitanKosong(nomor_rumah, bulan) {
       const semuaTerisi = [...new Set([...terisi, ...terisiRapel])];
 
       const [tahun, bulanStr] = bulan.split("-");
-      const tanggalTerakhir = lastDayOfMonth(new Date(tahun, parseInt(bulanStr) - 1));
+      const tanggalTerakhir = lastDayOfMonth(
+        new Date(tahun, parseInt(bulanStr) - 1),
+      );
       const semuaTanggalBulanIni = [];
       for (let d = 1; d <= tanggalTerakhir.getDate(); d++) {
-        semuaTanggalBulanIni.push(format(new Date(tahun, parseInt(bulanStr) - 1, d), "yyyy-MM-dd"));
+        semuaTanggalBulanIni.push(
+          format(new Date(tahun, parseInt(bulanStr) - 1, d), "yyyy-MM-dd"),
+        );
       }
 
       // Filter untuk menemukan tanggal yang belum terisi (kosong)
@@ -280,6 +298,7 @@ module.exports = {
   ambilLaporanHarian,
   simpanRapelHarian,
   ambilRapelHarian,
+  ambilRapelBulanan,
   ambilTanggalJimpitanKosong,
   ambilTanggalRapelTerisi,
 };

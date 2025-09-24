@@ -69,9 +69,9 @@ async function startBot() {
     } else if (connection === "open") {
       isConnected = true;
       console.log("Koneksi berhasil! Bot siap digunakan.");
-      
+
       // Trigger all waiting callbacks
-      connectionCallbacks.forEach(callback => callback());
+      connectionCallbacks.forEach((callback) => callback());
       connectionCallbacks = [];
     }
   });
