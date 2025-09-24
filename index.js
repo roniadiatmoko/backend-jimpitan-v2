@@ -140,7 +140,7 @@ app.get("/api/laporan/:tanggal", async (req, res) => {
 // --- FUNGSI BARU: Endpoint POST untuk fitur rapel ---
 app.post("/api/rapel", async (req, res) => {
   try {
-    const { secret_key, nomor_rumah, nominal } = req.body;
+    const { secret_key, nomor_rumah, nominal, bulan } = req.body;
 
     if (secret_key !== "rahasiakita123") {
       return res.status(401).json({ status: "UNAUTHORIZED" });
@@ -157,19 +157,20 @@ app.post("/api/rapel", async (req, res) => {
       });
     }
 
-    const bulanSekarang = moment().tz("Asia/Jakarta").format("YYYY-MM");
+    // const bulanSekarang = moment().tz("Asia/Jakarta").format("YYYY-MM");
+    const bulanTerpilih = bulan;
 
     // 1. Ambil daftar tanggal jimpitan yang kosong di bulan ini
     const tanggalJimpitanKosong = await ambilTanggalJimpitanKosong(
       nomor_rumah,
-      bulanSekarang,
+      bulanTerpilih,
     );
     console.log("tanggal jimpitan kosong:", tanggalJimpitanKosong);
 
     // 2. Ambil daftar tanggal yang sudah dirapel di bulan ini
     const tanggalRapelTerisi = await ambilTanggalRapelTerisi(
       nomor_rumah,
-      bulanSekarang,
+      bulanTerpilih,
     );
     console.log("tanggal rapel terisi:", tanggalRapelTerisi);
 
@@ -186,7 +187,7 @@ app.post("/api/rapel", async (req, res) => {
     if (tanggalYangDisimpan.length === 0) {
       return res.status(404).json({
         status: "NOT_FOUND",
-        message: `Tidak ada hari jimpitan kosong untuk rumah ${nomor_rumah} di bulan ini.`,
+        message: `Tidak ada hari jimpitan kosong untuk rumah No. ${nomor_rumah} di bulan ini.`,
       });
     }
 

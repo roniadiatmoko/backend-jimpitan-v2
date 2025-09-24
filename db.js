@@ -222,6 +222,7 @@ function ambilTanggalJimpitanKosong(nomor_rumah, bulan) {
 
       // Gabungkan dan hilangkan duplikasi dari tanggal yang terisi jimpitan atau rapel
       const semuaTerisi = [...new Set([...terisi, ...terisiRapel])];
+      console.log("terisi harian:", terisi);
 
       const [tahun, bulanStr] = bulan.split("-");
       const tanggalTerakhir = lastDayOfMonth(
@@ -255,7 +256,7 @@ function ambilTanggalJimpitanKosong(nomor_rumah, bulan) {
 function ambilTanggalJimpitanTerisi(nomor_rumah, bulan) {
   return new Promise((resolve, reject) => {
     db.all(
-      "SELECT tanggal FROM jimpitan WHERE nomor_rumah = ? AND SUBSTR(tanggal, 1, 7) = ?",
+      "SELECT tanggal FROM jimpitan WHERE nomor_rumah = ? AND SUBSTR(tanggal, 1, 7) = ? and jumlah <> 0",
       [nomor_rumah, bulan],
       (err, rows) => {
         if (err) reject(err);
