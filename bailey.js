@@ -174,10 +174,64 @@ async function kirimLaporanWhatsApp(tanggal) {
   }
 }
 
+async function resendLaporanWhatsApp(tanggal) {
+  try {
+    if (!sock || !sock.user) {
+      console.log(
+        "Bot WhatsApp belum terhubung. Silakan scan QR code terlebih dahulu.",
+      );
+      return;
+    }
+
+    const laporanData = await ambilLaporanHarian(tanggal);
+    if (!laporanData || laporanData.laporan.length === 0) {
+      console.log(`Tidak ada data jimpitan untuk tanggal ${tanggal}.`);
+      return;
+    }
+
+    // Mengurutkan data berdasarkan nomor rumah secara numerik
+    laporanData.laporan.sort(
+      (a, b) => parseInt(a.nomor_rumah) - parseInt(b.nomor_rumah),
+    );
+
+    // Format pesan laporan
+    let laporanText = `*Laporan Jimpitan Harian*\n\n`;
+    laporanText += `Tanggal: ${tanggal}\n`;
+    laporanText += `------------------------------------\n`;
+    laporanText += `💰 Total Terkumpul: Rp ${laporanData.totalUang.toLocaleString()}\n`;
+    laporanText += `✅ Terisi: ${laporanData.totalTerisi} rumah\n`;
+    laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah(Untuk yang sudah rapel bulanan mohon abaikan)\n`;
+    laporanText += `------------------------------------\n\n`;
+    laporanText += `*Detail Jimpitan Harian:*\n`;
+
+    laporanData.laporan.forEach((item) => {
+      laporanText += `- Rumah ${item.nomor_rumah} (${item.nama_pengisi}): *${item.status_terisi}*\n`;
+    });
+
+    laporanText += `------------------------------------\n\n`;
+    laporanText += `_Informasi: ini adalah pesan otomatis dari ujicoba aplikasi jimpitan GBK Tempel 2_\n`;
+
+    const groupId = process.env.GROUP_ID;
+    if (!groupId) {
+      console.error(
+        "Environment variable GROUP_ID tidak ditemukan. Mohon tambahkan di Replit Secrets.",
+      );
+      return;
+    }
+
+    // Kirim laporan ke grup
+    await sock.sendMessage(groupId, { text: laporanText });
+    console.log("Laporan WhatsApp berhasil dikirim!");
+  } catch (error) {
+    console.error("Gagal mengirim laporan WhatsApp:", error);
+  }
+}
+
 // Ekspor fungsi
 module.exports = {
   startBot,
   kirimTesWhatsApp,
   kirimLaporanWhatsApp,
+  resendLaporanWhatsApp,
   onBotReady,
 };

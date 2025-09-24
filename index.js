@@ -21,6 +21,7 @@ const {
   startBot,
   kirimTesWhatsApp,
   kirimLaporanWhatsApp,
+  resendLaporanWhatsApp,
   onBotReady,
 } = require("./bailey");
 
@@ -95,6 +96,17 @@ app.post("/api/jimpitan", async (req, res) => {
     console.error("Error saat menyimpan data jimpitan:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
   }
+});
+
+app.get("/api/resend-laporan-jimpitan/:tanggal", async (req, res) => {
+  const { tanggal } = req.params;
+  console.log(">>> Menerima permintaan kirim ulang laporan jimpitan");
+  startBot(); // Ensure bot is started
+  console.log(">>> Bot is ready, sending test WhatsApp message...");
+  onBotReady(async () => {
+    await resendLaporanWhatsApp(tanggal);
+  });
+  res.json({ status: "OK", message: "Tes dimulai, cek whatsapp" });
 });
 
 app.get("/api/tes-wa", async (req, res) => {
