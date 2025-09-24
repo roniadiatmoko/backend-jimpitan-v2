@@ -1,0 +1,14 @@
+{
+  "ignore": [
+    "*.db",
+    "baileys_auth_info/**",
+    "*.log", 
+    "logs/**",
+    ".env",
+    "node_modules/**",
+    "*.tmp",
+    "*.cache"
+  ],
+  "delay": 2000,
+  "verbose": false
+}
