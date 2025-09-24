@@ -198,7 +198,7 @@ function ambilRapelHarian(tanggal) {
 function ambilRapelBulanan(bulan) {
   return new Promise((resolve, reject) => {
     db.all(
-      "SELECT nomor_rumah, tanggal FROM rapel WHERE SUBSTR(tanggal, 1, 7) = ? gr",
+      "SELECT nomor_rumah, count(1) as jumlah_rapel FROM rapel WHERE SUBSTR(tanggal, 1, 7) = ? GROUP BY nomor_rumah ORDER BY nomor_rumah",
       [bulan],
       (err, rows) => {
         if (err) reject(err);
