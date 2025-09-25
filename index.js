@@ -58,6 +58,20 @@ app.get("/api/jimpitan", async (req, res) => {
   }
 });
 
+//Get tanggal rapel by nomor rumah dan bulan
+app.get("/api/detail-rapel-per-rumah/:nomor_rumah/:bulan", async (req, res) => {
+  try {
+    const data = await ambilTanggalRapelTerisi(
+      req.params.nomor_rumah,
+      req.params.bulan,
+    );
+    res.json({ status: "OK", tanggalRapel: data });
+  } catch (err) {
+    console.error("Error saat mengambil data rapel per rumah:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
 let isBotStarted = false;
 
 // Endpoint untuk menyimpan data

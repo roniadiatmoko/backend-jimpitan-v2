@@ -147,16 +147,17 @@ async function kirimLaporanWhatsApp(tanggal) {
     laporanText += `------------------------------------\n`;
     laporanText += `💰 Total Terkumpul: Rp ${laporanData.totalUang.toLocaleString()}\n`;
     laporanText += `✅ Terisi: ${laporanData.totalTerisi} rumah\n`;
+    laporanText += `📦 Sudah Rapel: ${laporanData.totalRapel} rumah\n`;
     laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah(Untuk yang sudah rapel bulanan mohon abaikan)\n`;
     laporanText += `------------------------------------\n\n`;
     laporanText += `*Detail Jimpitan Harian:*\n`;
 
     laporanData.laporan.forEach((item) => {
-      laporanText += `- Rumah ${item.nomor_rumah} (${item.nama_pengisi}): *${item.status_terisi}*\n`;
+      laporanText += `- Rumah ${item.nomor_rumah} (${item.nama_pengisi}): *${item.status_terisi == "Rapel" ? "Sudah Rapel" : item.status_terisi}*\n`;
     });
 
     laporanText += `------------------------------------\n\n`;
-    laporanText += `_Informasi: ini adalah pesan otomatis dari ujicoba aplikasi jimpitan GBK Tempel 2_\n`;
+    laporanText += `_Informasi: ini adalah pesan otomatis dari aplikasi jimpitan GBK Tempel 2_\n`;
 
     const groupId = process.env.GROUP_ID;
     if (!groupId) {
@@ -200,18 +201,19 @@ async function resendLaporanWhatsApp(tanggal) {
     laporanText += `------------------------------------\n`;
     laporanText += `💰 Total Terkumpul: Rp ${laporanData.totalUang.toLocaleString()}\n`;
     laporanText += `✅ Terisi: ${laporanData.totalTerisi} rumah\n`;
+    laporanText += `📦 Sudah Rapel: ${laporanData.totalRapel} rumah\n`;
     laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah(Untuk yang sudah rapel bulanan mohon abaikan)\n`;
     laporanText += `------------------------------------\n\n`;
     laporanText += `*Detail Jimpitan Harian:*\n`;
 
     laporanData.laporan.forEach((item) => {
-      laporanText += `- Rumah ${item.nomor_rumah} (${item.nama_pengisi}): *${item.status_terisi}*\n`;
+      laporanText += `- Rumah ${item.nomor_rumah} (${item.nama_pengisi}): *${item.status_terisi == "Rapel" ? "Sudah Rapel" : item.status_terisi}*\n`;
     });
 
     laporanText += `------------------------------------\n\n`;
     laporanText += `_Informasi: ini adalah pesan otomatis dari ujicoba aplikasi jimpitan GBK Tempel 2_\n`;
 
-    const groupId = process.env.GROUP_ID;
+    const groupId = process.env.GROUP_ID_TESTING;
     if (!groupId) {
       console.error(
         "Environment variable GROUP_ID tidak ditemukan. Mohon tambahkan di Replit Secrets.",
