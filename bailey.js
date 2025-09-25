@@ -141,14 +141,27 @@ async function kirimLaporanWhatsApp(tanggal) {
       (a, b) => parseInt(a.nomor_rumah) - parseInt(b.nomor_rumah),
     );
 
+    const hariList = [
+      "Minggu",
+      "Senin",
+      "Selasa",
+      "Rabu",
+      "Kamis",
+      "Jumat",
+      "Sabtu",
+    ];
+
+    const d = new Date(tanggal); // otomatis parse "yyyy-mm-dd"
+    const namaHari = hariList[d.getDay()];
+
     // Format pesan laporan
     let laporanText = `*Laporan Jimpitan Harian*\n\n`;
-    laporanText += `Tanggal: ${tanggal}\n`;
+    laporanText += `Tanggal: ${namaHari}, ${tanggal}\n`;
     laporanText += `------------------------------------\n`;
     laporanText += `💰 Total Terkumpul: Rp ${laporanData.totalUang.toLocaleString()}\n`;
     laporanText += `✅ Terisi: ${laporanData.totalTerisi} rumah\n`;
     laporanText += `📦 Sudah Rapel: ${laporanData.totalRapel} rumah\n`;
-    laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah(Untuk yang sudah rapel bulanan mohon abaikan)\n`;
+    laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah\n`;
     laporanText += `------------------------------------\n\n`;
     laporanText += `*Detail Jimpitan Harian:*\n`;
 
@@ -195,14 +208,27 @@ async function resendLaporanWhatsApp(tanggal) {
       (a, b) => parseInt(a.nomor_rumah) - parseInt(b.nomor_rumah),
     );
 
+    const hariList = [
+      "Minggu",
+      "Senin",
+      "Selasa",
+      "Rabu",
+      "Kamis",
+      "Jumat",
+      "Sabtu",
+    ];
+
+    const d = new Date(tanggal); // otomatis parse "yyyy-mm-dd"
+    const namaHari = hariList[d.getDay()];
+
     // Format pesan laporan
     let laporanText = `*Laporan Jimpitan Harian*\n\n`;
-    laporanText += `Tanggal: ${tanggal}\n`;
+    laporanText += `Tanggal: ${namaHari}, ${tanggal}\n`;
     laporanText += `------------------------------------\n`;
     laporanText += `💰 Total Terkumpul: Rp ${laporanData.totalUang.toLocaleString()}\n`;
     laporanText += `✅ Terisi: ${laporanData.totalTerisi} rumah\n`;
     laporanText += `📦 Sudah Rapel: ${laporanData.totalRapel} rumah\n`;
-    laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah(Untuk yang sudah rapel bulanan mohon abaikan)\n`;
+    laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah\n`;
     laporanText += `------------------------------------\n\n`;
     laporanText += `*Detail Jimpitan Harian:*\n`;
 
