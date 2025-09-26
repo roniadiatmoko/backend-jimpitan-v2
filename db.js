@@ -198,7 +198,7 @@ function ambilRapelHarian(tanggal) {
 function ambilRapelBulanan(bulan) {
   return new Promise((resolve, reject) => {
     db.all(
-      "SELECT nomor_rumah, count(1) as jumlah_rapel FROM rapel WHERE SUBSTR(tanggal, 1, 7) = ? GROUP BY nomor_rumah ORDER BY nomor_rumah",
+      "SELECT nomor_rumah, count(1) as jumlah_rapel, count(1) * 500 nominal FROM rapel WHERE SUBSTR(tanggal, 1, 7) = ? GROUP BY nomor_rumah ORDER BY nomor_rumah",
       [bulan],
       (err, rows) => {
         if (err) reject(err);
@@ -292,9 +292,24 @@ function ambilSemuaData() {
   });
 }
 
+//bulan=yyyy-mm
+function ambilJimpitanPerBulan(bulan) {
+  return new Promise((resolve, reject) => {
+    db.all(
+      "SELECT tanggal, count(1) terisi, count(1)*500 nominal  FROM jimpitan WHERE SUBSTR(tanggal, 1, 7) = ? and jumlah <> 0 GROUP BY tanggal ORDER BY tanggal ASC, nomor_rumah ASC",
+      [bulan],
+      (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      },
+    );
+  });
+}
+
 module.exports = {
   db,
   ambilSemuaData,
+  ambilJimpitanPerBulan,
   hapusDanSimpanJimpitanHarian,
   ambilLaporanHarian,
   simpanRapelHarian,

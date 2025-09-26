@@ -9,6 +9,7 @@ const { format, isValid, parse } = require("date-fns");
 // Import fungsi dari db.js
 const {
   ambilSemuaData,
+  ambilJimpitanPerBulan,
   hapusDanSimpanJimpitanHarian,
   ambilLaporanHarian,
   simpanRapelHarian,
@@ -51,6 +52,17 @@ app.get("/ping", (req, res) => {
 app.get("/api/jimpitan", async (req, res) => {
   try {
     const data = await ambilSemuaData();
+    res.json({ status: "OK", data });
+  } catch (err) {
+    console.error("Error saat mengambil data jimpitan:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+//Get harian jimpitan per bulan, yyyy-mm
+app.get("/api/jimpitan/:bulan", async (req, res) => {
+  try{
+    const data = await ambilJimpitanPerBulan(req.params.bulan);
     res.json({ status: "OK", data });
   } catch (err) {
     console.error("Error saat mengambil data jimpitan:", err);
