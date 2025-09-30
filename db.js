@@ -26,6 +26,27 @@ db.serialize(() => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nomor_rumah TEXT,
       tanggal TEXT)`);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS pengeluaran (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tanggal TEXT,
+      nominal TEXT,
+      penanggung_jawab TEXT,
+      keterangan TEXT,
+      bukti_foto TEXT,
+      created_at TEXT
+    )
+    `)
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS hitung_ulang_jimpitan_harian (
+      tanggal TEXT PRIMARY KEY,
+      nominal_hitung_ulang TEXT,
+      created_at TEXT
+      )
+    `
+  )
 });
 
 // FUNGSI UTAMA: Hapus data untuk tanggal tertentu, lalu masukkan data baru
@@ -306,6 +327,34 @@ function ambilJimpitanPerBulan(bulan) {
   });
 }
 
+//ambil pengeluaran yyyy-mm
+function ambilPengeluaran(bulan){
+  return new Promise((resolve, reject) => {
+    db.all(
+      "SELECT * from pengeluaran WHERE SUBSTR(tanggal, 1, 7) = ? ORDER BY tanggal ASC",
+      [bulan],
+      (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      },
+    );
+  });
+}
+
+function simpanPengeluaran(tanggal, nominal, penanggung_jawab, keterangan, bukti_foto){
+  return new Promise((resolve, reject) => {
+    const createdAt = new Date().toISOString();
+    db.run(
+      "INSERT INTO pengeluaran (tanggal, nominal, penanggung_jawab, keterangan, bukti_foto, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [tanggal, nominal, penanggung_jawab, keterangan, bukti_foto, createdAt],
+      (err) => {
+        if (err) reject(err);
+        else resolve();
+      }
+    )
+  })
+}
+
 module.exports = {
   db,
   ambilSemuaData,
@@ -317,4 +366,6 @@ module.exports = {
   ambilRapelBulanan,
   ambilTanggalJimpitanKosong,
   ambilTanggalRapelTerisi,
+  ambilPengeluaran,
+  simpanPengeluaran,
 };

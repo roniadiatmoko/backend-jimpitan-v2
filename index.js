@@ -6,6 +6,8 @@ const bodyParser = require("body-parser");
 const moment = require("moment-timezone");
 const { format, isValid, parse } = require("date-fns");
 
+const hitungUlangRouter = require("./src/features/hitung_ulang_jimpitan_harian/routes");
+
 // Import fungsi dari db.js
 const {
   ambilSemuaData,
@@ -17,6 +19,8 @@ const {
   ambilRapelBulanan,
   ambilTanggalJimpitanKosong,
   ambilTanggalRapelTerisi,
+  ambilPengeluaran,
+  simpanPengeluaran,
 } = require("./db");
 const {
   startBot,
@@ -270,6 +274,36 @@ app.get("/api/rapel-bulanan/:bulan", async (req, res) => {
     res.status(500).json({ status: "ERROR", message: err.message });
   }
 });
+
+//Mengambil daftar pengeluaran
+app.get("/api/pengeluaran/:bulan", async (req, res) => {
+  try {
+    const {bulan} = req.params;
+    const pengeluaran = await ambilPengeluaran(bulan);
+    console.log('pengeluaran', bulan);
+    res.json({status: "OK", pengeluaran});
+  }catch(err){
+    console.error("Error saat mengambil status pengeluaran:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+})
+
+//Menyimpan pengeluaran
+app.post('/api/pengeluaran', async (req, res) => {
+  try{
+    const {tanggal, nominal, penanggung_jawab, keterangan, bukti_foto} = req.body;
+    await simpanPengeluaran(tanggal, nominal, penanggung_jawab, keterangan, bukti_foto);
+    res.json({status: "OK"});
+  }catch(err){
+    console.error("Error saat menyimpan pengeluaran:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+})
+
+
+//hitung ulang nominal jimpitan harian
+app.use("/api/jimpitan", hitungUlangRouter);
+
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server berjalan di http://0.0.0.0:${PORT}`);
