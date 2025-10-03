@@ -291,6 +291,7 @@ app.get("/api/pengeluaran/:bulan", async (req, res) => {
 //Menyimpan pengeluaran
 app.post('/api/pengeluaran', async (req, res) => {
   try{
+    console.log(">>> Menerima POST pengeluaran:", req.body);
     const {tanggal, nominal, penanggung_jawab, keterangan, bukti_foto} = req.body;
     await simpanPengeluaran(tanggal, nominal, penanggung_jawab, keterangan, bukti_foto);
     res.json({status: "OK"});
