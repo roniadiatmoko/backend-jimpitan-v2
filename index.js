@@ -7,6 +7,7 @@ const moment = require("moment-timezone");
 const { format, isValid, parse } = require("date-fns");
 
 const hitungUlangRouter = require("./src/features/hitung_ulang_jimpitan_harian/routes");
+const laporanRouter = require("./src/features/laporan/routes");
 
 // Import fungsi dari db.js
 const {
@@ -304,6 +305,7 @@ app.post('/api/pengeluaran', async (req, res) => {
 
 //hitung ulang nominal jimpitan harian
 app.use("/api/jimpitan", hitungUlangRouter);
+app.use("/api", laporanRouter);
 
 
 app.listen(PORT, "0.0.0.0", () => {
