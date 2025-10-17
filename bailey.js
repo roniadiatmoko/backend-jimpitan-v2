@@ -1,118 +1,134 @@
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  makeCacheableSignalKeyStore,
-  jidNormalizedUser,
-} = require("@whiskeysockets/baileys");
-const { pino } = require("pino");
+// baileys.js (CommonJS, siap untuk Baileys v7)
+const P = require("pino");
 const NodeCache = require("node-cache");
-const qrcode = require("qrcode-terminal"); // Import library qrcode-terminal
+const qrcode = require("qrcode-terminal");
 const { ambilLaporanHarian } = require("./db");
 
-// Gunakan cache untuk meningkatkan performa
+const logger = P({ level: "info" });
 const msgRetryCounterCache = new NodeCache();
-const logger = pino({ level: "info" }); // Aktifkan log pino agar terlihat prosesnya
 
-let sock;
+let sock = null;
+let latestQr = null;
+let starting = false;
 let isConnected = false;
 let connectionCallbacks = [];
 
-// Function to notify when bot is ready
+// ====== API kecil untuk module lain ======
 function onBotReady(callback) {
-  if (isConnected) {
-    callback();
-  } else {
-    connectionCallbacks.push(callback);
+  if (isConnected) callback();
+  else connectionCallbacks.push(callback);
+}
+function getLatestQr() {
+  return latestQr;
+}
+
+// ====== START BOT ======
+async function startBot() {
+  if (starting) {
+    logger.info("[startBot] already starting, skip");
+    return;
+  }
+  starting = true;
+
+  try {
+    // Dynamic import karena Baileys v7 adalah ESM
+    const baileys = await import("@whiskeysockets/baileys");
+    const {
+      default: makeWASocket,
+      useMultiFileAuthState,
+      makeCacheableSignalKeyStore,
+      DisconnectReason,
+      fetchLatestBaileysVersion,
+      // isPnUser // (opsional; pengganti isJidUser di v7)
+    } = baileys;
+
+    const AUTH_PATH = "./baileys_auth_info"; // pastikan writable
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
+
+    // Wajib: versi WA web terbaru (tanpa ini sering 405/QR tidak muncul)
+    const { version } = await fetchLatestBaileysVersion();
+
+    // IMPORTANT: jangan re-declare sock (pakai variable global)
+    sock = makeWASocket({
+      version,
+      logger,
+      browser: ["Ubuntu", "Chrome", "122.0.0"],
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, logger),
+      },
+      msgRetryCounterCache,
+    });
+
+    // simpan kredensial jika berubah
+    sock.ev.on("creds.update", saveCreds);
+
+    // koneksi lifecycle
+    sock.ev.on("connection.update", (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        latestQr = qr;
+        console.log("[QR] baru — scan dari terminal atau /qr");
+        qrcode.generate(qr, { small: true }); // tampilkan di console
+      }
+
+      if (connection === "open") {
+        isConnected = true;
+        latestQr = null;
+        console.log("[WA] OPEN ✅ — bot siap");
+        connectionCallbacks.forEach((cb) => cb());
+        connectionCallbacks = [];
+      }
+
+      if (connection === "close") {
+        isConnected = false;
+        const code =
+          lastDisconnect?.error?.output?.statusCode ??
+          lastDisconnect?.error?.statusCode ??
+          lastDisconnect?.error?.status ??
+          lastDisconnect?.error?.code;
+
+        const isLoggedOut = code === DisconnectReason.loggedOut || code === 401;
+
+        console.log("[WA] CLOSE", { code, isLoggedOut });
+        if (!isLoggedOut) {
+          setTimeout(() => startBot(), 1500); // reconnect ringan
+        } else {
+          console.log(
+            "Sesi logout. Hapus ./baileys_auth_info lalu scan ulang.",
+          );
+        }
+      }
+    });
+
+    // (opsional) bantu cari Group JID saat pesan masuk
+    // sock.ev.on("messages.upsert", async ({ messages }) => {
+    //   const m = messages?.[0];
+    //   const jid = m?.key?.remoteJid;
+    //   if (jid && !m?.key?.fromMe && jid.endsWith("@g.us")) {
+    //     console.log("Group JID terdeteksi:", jid);
+    //   }
+    // });
+  } catch (e) {
+    console.error("[startBot] FATAL:", e);
+  } finally {
+    starting = false;
   }
 }
 
-// Fungsi untuk memulai koneksi ke WhatsApp
-async function startBot() {
-  console.log(">>> Fungsi startBot dipanggil...");
-
-  const { state, saveCreds } = await useMultiFileAuthState("baileys_auth_info");
-
-  sock = makeWASocket({
-    logger,
-    printQRInTerminal: false, // Opsi ini sudah tidak digunakan
-    browser: ["Replit", "Safari", "1.0.0"],
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger),
-    },
-    msgRetryCounterCache,
-  });
-
-  // Simpan kredensial saat ada perubahan
-  sock.ev.on("creds.update", saveCreds);
-
-  // Tangani event koneksi
-  sock.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect, qr } = update;
-
-    // CARA BARU UNTUK MENAMPILKAN QR CODE DENGAN qrcode-terminal
-    if (qr) {
-      console.log("Silakan scan QR Code ini untuk menghubungkan bot:");
-      qrcode.generate(qr, { small: true }); // Tampilkan QR code di terminal
-    }
-
-    if (connection === "close") {
-      isConnected = false;
-      const shouldReconnect = lastDisconnect.error?.output?.statusCode !== 401;
-      console.log(
-        "Koneksi terputus. Mencoba terhubung kembali...",
-        lastDisconnect.error,
-      );
-      if (shouldReconnect) {
-        startBot();
-      }
-    } else if (connection === "open") {
-      isConnected = true;
-      console.log("Koneksi berhasil! Bot siap digunakan.");
-
-      // Trigger all waiting callbacks
-      connectionCallbacks.forEach((callback) => callback());
-      connectionCallbacks = [];
-    }
-  });
-
-  // FUNGSI BARU: Mendengarkan pesan untuk mendapatkan ID grup
-  sock.ev.on("messages.upsert", async ({ messages }) => {
-    const message = messages[0];
-    if (!message.key.fromMe) {
-      const jid = jidNormalizedUser(message.key.remoteJid);
-
-      // Periksa apakah pesan berasal dari grup
-      if (jid.endsWith("@g.us")) {
-        console.log("------------------------------------");
-        console.log(">> Ditemukan ID Grup:");
-        console.log(
-          ">> Salin ID ini dan tempelkan di Replit Secrets sebagai GROUP_ID",
-        );
-        console.log(">>", jid);
-        console.log("------------------------------------");
-      }
-    }
-  });
-}
-
+// ====== KIRIM PESAN: TES ======
 async function kirimTesWhatsApp(message) {
   try {
     if (!sock || !sock.user) {
-      console.log(
-        "Bot WhatsApp belum terhubung. Silakan scan QR code terlebih dahulu.",
-      );
+      console.log("Bot belum terhubung. Silakan scan QR dulu.");
       return;
     }
-
-    const groupId = process.env.GROUP_ID_TESTING;
+    const groupId = process.env.GROUP_ID_TESTING; // contoh: 1203630xxx@g.us
     if (!groupId) {
-      console.error(
-        "Environment variable GROUP_ID tidak ditemukan. Mohon tambahkan di Replit Secrets.",
-      );
+      console.error("GROUP_ID_TESTING belum diset.");
       return;
     }
-
     await sock.sendMessage(groupId, { text: message });
     console.log("Pesan WhatsApp berhasil dikirim!");
   } catch (error) {
@@ -120,13 +136,11 @@ async function kirimTesWhatsApp(message) {
   }
 }
 
-// Fungsi utama yang akan dipanggil dari index.js untuk mengirim laporan
+// ====== KIRIM LAPORAN ======
 async function kirimLaporanWhatsApp(tanggal) {
   try {
     if (!sock || !sock.user) {
-      console.log(
-        "Bot WhatsApp belum terhubung. Silakan scan QR code terlebih dahulu.",
-      );
+      console.log("Bot belum terhubung. Silakan scan QR dulu.");
       return;
     }
 
@@ -136,9 +150,8 @@ async function kirimLaporanWhatsApp(tanggal) {
       return;
     }
 
-    // Mengurutkan data berdasarkan nomor rumah secara numerik
     laporanData.laporan.sort(
-      (a, b) => parseInt(a.nomor_rumah) - parseInt(b.nomor_rumah),
+      (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah),
     );
 
     const hariList = [
@@ -150,11 +163,9 @@ async function kirimLaporanWhatsApp(tanggal) {
       "Jumat",
       "Sabtu",
     ];
-
-    const d = new Date(tanggal); // otomatis parse "yyyy-mm-dd"
+    const d = new Date(tanggal);
     const namaHari = hariList[d.getDay()];
 
-    // Format pesan laporan
     let laporanText = `*Laporan Jimpitan Harian*\n\n`;
     laporanText += `Tanggal: ${namaHari}, ${tanggal}\n`;
     laporanText += `------------------------------------\n`;
@@ -164,23 +175,20 @@ async function kirimLaporanWhatsApp(tanggal) {
     laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah\n`;
     laporanText += `------------------------------------\n\n`;
     laporanText += `*Detail Jimpitan Harian:*\n`;
-
     laporanData.laporan.forEach((item) => {
-      laporanText += `- Rumah ${item.nomor_rumah} (${item.nama_pengisi}): *${item.status_terisi == "Rapel" ? "Sudah Rapel" : item.status_terisi}*\n`;
+      const status =
+        item.status_terisi == "Rapel" ? "Sudah Rapel" : item.status_terisi;
+      laporanText += `- Rumah ${item.nomor_rumah} (${item.nama_pengisi}): *${status}*\n`;
     });
-
     laporanText += `------------------------------------\n\n`;
     laporanText += `_Informasi: ini adalah pesan otomatis dari aplikasi jimpitan GBK Tempel 2_\n`;
 
     const groupId = process.env.GROUP_ID;
     if (!groupId) {
-      console.error(
-        "Environment variable GROUP_ID tidak ditemukan. Mohon tambahkan di Replit Secrets.",
-      );
+      console.error("GROUP_ID belum diset.");
       return;
     }
 
-    // Kirim laporan ke grup
     await sock.sendMessage(groupId, { text: laporanText });
     console.log("Laporan WhatsApp berhasil dikirim!");
   } catch (error) {
@@ -188,12 +196,11 @@ async function kirimLaporanWhatsApp(tanggal) {
   }
 }
 
+// ====== RESEND ke grup testing ======
 async function resendLaporanWhatsApp(tanggal) {
   try {
     if (!sock || !sock.user) {
-      console.log(
-        "Bot WhatsApp belum terhubung. Silakan scan QR code terlebih dahulu.",
-      );
+      console.log("Bot belum terhubung. Silakan scan QR dulu.");
       return;
     }
 
@@ -203,9 +210,8 @@ async function resendLaporanWhatsApp(tanggal) {
       return;
     }
 
-    // Mengurutkan data berdasarkan nomor rumah secara numerik
     laporanData.laporan.sort(
-      (a, b) => parseInt(a.nomor_rumah) - parseInt(b.nomor_rumah),
+      (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah),
     );
 
     const hariList = [
@@ -217,11 +223,9 @@ async function resendLaporanWhatsApp(tanggal) {
       "Jumat",
       "Sabtu",
     ];
-
-    const d = new Date(tanggal); // otomatis parse "yyyy-mm-dd"
+    const d = new Date(tanggal);
     const namaHari = hariList[d.getDay()];
 
-    // Format pesan laporan
     let laporanText = `*Laporan Jimpitan Harian*\n\n`;
     laporanText += `Tanggal: ${namaHari}, ${tanggal}\n`;
     laporanText += `------------------------------------\n`;
@@ -231,35 +235,32 @@ async function resendLaporanWhatsApp(tanggal) {
     laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah\n`;
     laporanText += `------------------------------------\n\n`;
     laporanText += `*Detail Jimpitan Harian:*\n`;
-
     laporanData.laporan.forEach((item) => {
-      laporanText += `- Rumah ${item.nomor_rumah} (${item.nama_pengisi}): *${item.status_terisi == "Rapel" ? "Sudah Rapel" : item.status_terisi}*\n`;
+      const status =
+        item.status_terisi == "Rapel" ? "Sudah Rapel" : item.status_terisi;
+      laporanText += `- Rumah ${item.nomor_rumah} (${item.nama_pengisi}): *${status}*\n`;
     });
-
     laporanText += `------------------------------------\n\n`;
     laporanText += `_Informasi: ini adalah pesan otomatis dari ujicoba aplikasi jimpitan GBK Tempel 2_\n`;
 
     const groupId = process.env.GROUP_ID_TESTING;
     if (!groupId) {
-      console.error(
-        "Environment variable GROUP_ID tidak ditemukan. Mohon tambahkan di Replit Secrets.",
-      );
+      console.error("GROUP_ID_TESTING belum diset.");
       return;
     }
 
-    // Kirim laporan ke grup
     await sock.sendMessage(groupId, { text: laporanText });
-    console.log("Laporan WhatsApp berhasil dikirim!");
+    console.log("Laporan WhatsApp berhasil dikirim (testing)!");
   } catch (error) {
-    console.error("Gagal mengirim laporan WhatsApp:", error);
+    console.error("Gagal mengirim laporan WhatsApp (testing):", error);
   }
 }
 
-// Ekspor fungsi
 module.exports = {
   startBot,
+  onBotReady,
+  getLatestQr,
   kirimTesWhatsApp,
   kirimLaporanWhatsApp,
   resendLaporanWhatsApp,
-  onBotReady,
 };

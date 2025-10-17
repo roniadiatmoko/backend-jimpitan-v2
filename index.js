@@ -28,6 +28,7 @@ const {
   kirimTesWhatsApp,
   kirimLaporanWhatsApp,
   resendLaporanWhatsApp,
+  getLatestQr,
   onBotReady,
 } = require("./bailey");
 
@@ -66,7 +67,7 @@ app.get("/api/jimpitan", async (req, res) => {
 
 //Get harian jimpitan per bulan, yyyy-mm
 app.get("/api/jimpitan/:bulan", async (req, res) => {
-  try{
+  try {
     const data = await ambilJimpitanPerBulan(req.params.bulan);
     res.json({ status: "OK", data });
   } catch (err) {
@@ -136,6 +137,19 @@ app.get("/api/resend-laporan-jimpitan/:tanggal", async (req, res) => {
   console.log(">>> Bot is ready, sending test WhatsApp message...");
   onBotReady(async () => {
     await resendLaporanWhatsApp(tanggal);
+  });
+  res.json({ status: "OK", message: "Tes dimulai, cek whatsapp" });
+});
+
+app.get("/api/kirim-laporan-jimpitan/:tanggal", async (req, res) => {
+  const { tanggal } = req.params;
+  console.log(
+    ">>> Menerima permintaan kirim ulang laporan jimpitan grup utama",
+  );
+  startBot(); // Ensure bot is started
+  console.log(">>> Bot is ready, sending test WhatsApp message...");
+  onBotReady(async () => {
+    await kirimLaporanWhatsApp(tanggal);
   });
   res.json({ status: "OK", message: "Tes dimulai, cek whatsapp" });
 });
@@ -279,34 +293,52 @@ app.get("/api/rapel-bulanan/:bulan", async (req, res) => {
 //Mengambil daftar pengeluaran
 app.get("/api/pengeluaran/:bulan", async (req, res) => {
   try {
-    const {bulan} = req.params;
+    const { bulan } = req.params;
     const pengeluaran = await ambilPengeluaran(bulan);
-    console.log('pengeluaran', bulan);
-    res.json({status: "OK", pengeluaran});
-  }catch(err){
+    console.log("pengeluaran", bulan);
+    res.json({ status: "OK", pengeluaran });
+  } catch (err) {
     console.error("Error saat mengambil status pengeluaran:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
   }
-})
+});
 
 //Menyimpan pengeluaran
-app.post('/api/pengeluaran', async (req, res) => {
-  try{
+app.post("/api/pengeluaran", async (req, res) => {
+  try {
     console.log(">>> Menerima POST pengeluaran:", req.body);
-    const {tanggal, nominal, penanggung_jawab, keterangan, bukti_foto} = req.body;
-    await simpanPengeluaran(tanggal, nominal, penanggung_jawab, keterangan, bukti_foto);
-    res.json({status: "OK"});
-  }catch(err){
+    const { tanggal, nominal, penanggung_jawab, keterangan, bukti_foto } =
+      req.body;
+    await simpanPengeluaran(
+      tanggal,
+      nominal,
+      penanggung_jawab,
+      keterangan,
+      bukti_foto,
+    );
+    res.json({ status: "OK" });
+  } catch (err) {
     console.error("Error saat menyimpan pengeluaran:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
   }
-})
+});
 
+app.get("/qr", (req, res) => {
+  const qr = getLatestQr(); // PANGGIL fungsinya
+  if (!qr) return res.send("Tidak ada QR. Mungkin sudah login ✅");
+  res.set({
+    "Content-Type": "text/html",
+    "Cache-Control": "no-store, no-cache, must-revalidate, private",
+    Pragma: "no-cache",
+    Expires: "0",
+  });
+  const img = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+  res.send(`<h3>Scan QR WhatsApp</h3><img src="${img}" alt="qr" />`);
+});
 
 //hitung ulang nominal jimpitan harian
 app.use("/api/jimpitan", hitungUlangRouter);
 app.use("/api", laporanRouter);
-
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server berjalan di http://0.0.0.0:${PORT}`);
