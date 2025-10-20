@@ -50,7 +50,7 @@ async function getHitungKekurangan(period) {
     ON t.nomor_rumah = k.nomor_rumah AND t.tanggal = k.tanggal
   GROUP BY k.nomor_rumah
   HAVING SUM(CASE WHEN t.tanggal IS NULL THEN 1 ELSE 0 END) > 0
-  ORDER BY k.nomor_rumah;
+  ORDER BY CAST(k.nomor_rumah AS INTEGER) ASC;
   `;
 
   const params = [
