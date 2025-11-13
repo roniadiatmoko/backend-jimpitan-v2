@@ -145,6 +145,22 @@ async function kirimLaporanWhatsApp(tanggal) {
       return;
     }
 
+    const presensiRonda = await getPresensiRondaByTanggal(tanggal);
+    if (!presensiRonda || presensiRonda.length === 0) {
+      console.log(`Tidak ada data presensi ronda untuk tanggal ${tanggal}.`);
+      return;
+    }
+
+    presensiRonda.sort((a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah));
+
+    let personilRonda = "Penanggung Jawab Ronda:\n";
+
+    personilRonda += presensiRonda
+      .map(
+        (item, idx) => `${idx + 1}. ${item.nomor_rumah} - ${item.nama_penghuni}`
+      )
+      .join("\n");
+
     const laporanData = await ambilLaporanHarian(tanggal);
     if (!laporanData || laporanData.laporan.length === 0) {
       console.log(`Tidak ada data jimpitan untuk tanggal ${tanggal}.`);
@@ -168,7 +184,8 @@ async function kirimLaporanWhatsApp(tanggal) {
     const namaHari = hariList[d.getDay()];
 
     let laporanText = `*Laporan Jimpitan Harian*\n\n`;
-    laporanText += `Tanggal: ${namaHari}, ${tanggal}\n`;
+    laporanText += `Tanggal: ${namaHari}, ${tanggal}\n\n`;
+    laporanText += `${personilRonda}\n`;
     laporanText += `------------------------------------\n`;
     laporanText += `💰 Total Terkumpul: Rp ${laporanData.totalUang.toLocaleString()}\n`;
     laporanText += `✅ Terisi: ${laporanData.totalTerisi} rumah\n`;
