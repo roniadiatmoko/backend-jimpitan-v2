@@ -3,6 +3,7 @@ const P = require("pino");
 const NodeCache = require("node-cache");
 const qrcode = require("qrcode-terminal");
 const { ambilLaporanHarian } = require("./db");
+const { getPresensiRondaByTanggal } = require("./src/features/presensi-ronda/model");
 
 const logger = P({ level: "info" });
 const msgRetryCounterCache = new NodeCache();
