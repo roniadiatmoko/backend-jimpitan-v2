@@ -26,7 +26,8 @@ db.serialize(() => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nomor_rumah TEXT,
       tanggal TEXT)`);
-
+  
+  //table pengeluaran
   db.run(`
     CREATE TABLE IF NOT EXISTS pengeluaran (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,6 +40,7 @@ db.serialize(() => {
     )
     `)
 
+  //table hitung ulang jimpitan harian
   db.run(`
     CREATE TABLE IF NOT EXISTS hitung_ulang_jimpitan_harian (
       tanggal TEXT PRIMARY KEY,
@@ -47,6 +49,18 @@ db.serialize(() => {
       )
     `
   )
+
+  //table presensi ronda
+  db.run(`
+    CREATE TABLE IF NOT EXISTS presensi_ronda (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tanggal TEXT,
+      nomor_rumah TEXT,
+      nama_penghuni TEXT,
+      waktu_input TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(tanggal, nomor_rumah)
+    )
+    `)
 });
 
 // FUNGSI UTAMA: Hapus data untuk tanggal tertentu, lalu masukkan data baru
