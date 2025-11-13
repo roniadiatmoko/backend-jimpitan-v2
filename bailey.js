@@ -96,7 +96,7 @@ async function startBot() {
           setTimeout(() => startBot(), 1500); // reconnect ringan
         } else {
           console.log(
-            "Sesi logout. Hapus ./baileys_auth_info lalu scan ulang.",
+            "Sesi logout. Hapus ./baileys_auth_info lalu scan ulang."
           );
         }
       }
@@ -151,7 +151,7 @@ async function kirimLaporanWhatsApp(tanggal) {
     }
 
     laporanData.laporan.sort(
-      (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah),
+      (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah)
     );
 
     const hariList = [
@@ -204,6 +204,22 @@ async function resendLaporanWhatsApp(tanggal) {
       return;
     }
 
+    const presensiRonda = await getPresensiRondaByTanggal(tanggal);
+    if (!presensiRonda || presensiRonda.length === 0) {
+      console.log(`Tidak ada data presensi ronda untuk tanggal ${tanggal}.`);
+      return;
+    }
+
+    presensiRonda.sort((a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah));
+
+    let personilRonda = "Penanggung Jawab Ronda:\n";
+
+    personilRonda += presensiRonda
+      .map(
+        (item, idx) => `${idx + 1}. ${item.nomor_rumah} - ${item.nama_penghuni}`
+      )
+      .join("\n");
+
     const laporanData = await ambilLaporanHarian(tanggal);
     if (!laporanData || laporanData.laporan.length === 0) {
       console.log(`Tidak ada data jimpitan untuk tanggal ${tanggal}.`);
@@ -211,7 +227,7 @@ async function resendLaporanWhatsApp(tanggal) {
     }
 
     laporanData.laporan.sort(
-      (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah),
+      (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah)
     );
 
     const hariList = [
@@ -227,7 +243,8 @@ async function resendLaporanWhatsApp(tanggal) {
     const namaHari = hariList[d.getDay()];
 
     let laporanText = `*Laporan Jimpitan Harian*\n\n`;
-    laporanText += `Tanggal: ${namaHari}, ${tanggal}\n`;
+    laporanText += `Tanggal: ${namaHari}, ${tanggal}\n\n`;
+    laporanText += `${personilRonda}\n`;
     laporanText += `------------------------------------\n`;
     laporanText += `💰 Total Terkumpul: Rp ${laporanData.totalUang.toLocaleString()}\n`;
     laporanText += `✅ Terisi: ${laporanData.totalTerisi} rumah\n`;
