@@ -3,7 +3,9 @@ const P = require("pino");
 const NodeCache = require("node-cache");
 const qrcode = require("qrcode-terminal");
 const { ambilLaporanHarian } = require("./db");
-const { getPresensiRondaByTanggal } = require("./src/features/presensi-ronda/model");
+const {
+  getPresensiRondaByTanggal,
+} = require("./src/features/presensi-ronda/model");
 
 const logger = P({ level: "info" });
 const msgRetryCounterCache = new NodeCache();
@@ -21,6 +23,10 @@ function onBotReady(callback) {
 }
 function getLatestQr() {
   return latestQr;
+}
+// opsional, kalau mau cek status dari luar (misal /status)
+function getSock() {
+  return sock;
 }
 
 // ====== START BOT ======
@@ -40,20 +46,19 @@ async function startBot() {
       makeCacheableSignalKeyStore,
       DisconnectReason,
       fetchLatestBaileysVersion,
-      // isPnUser // (opsional; pengganti isJidUser di v7)
     } = baileys;
 
     const AUTH_PATH = "./baileys_auth_info"; // pastikan writable
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
 
-    // Wajib: versi WA web terbaru (tanpa ini sering 405/QR tidak muncul)
+    // versi WA web terbaru
     const { version } = await fetchLatestBaileysVersion();
 
     // IMPORTANT: jangan re-declare sock (pakai variable global)
     sock = makeWASocket({
       version,
       logger,
-      browser: ["Ubuntu", "Chrome", "122.0.0"],
+      browser: ["Chrome", "Linux", "1.0"], // fingerprint stabil
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, logger),
@@ -80,26 +85,54 @@ async function startBot() {
         console.log("[WA] OPEN ✅ — bot siap");
         connectionCallbacks.forEach((cb) => cb());
         connectionCallbacks = [];
+        return;
       }
 
       if (connection === "close") {
         isConnected = false;
+
         const code =
           lastDisconnect?.error?.output?.statusCode ??
           lastDisconnect?.error?.statusCode ??
           lastDisconnect?.error?.status ??
           lastDisconnect?.error?.code;
 
-        const isLoggedOut = code === DisconnectReason.loggedOut || code === 401;
+        const reasonEntry = Object.entries(DisconnectReason).find(
+          ([, v]) => v === code,
+        );
+        const reason = reasonEntry?.[0];
 
-        console.log("[WA] CLOSE", { code, isLoggedOut });
-        if (!isLoggedOut) {
-          setTimeout(() => startBot(), 1500); // reconnect ringan
-        } else {
+        console.log("[WA] CLOSE", { code, reason });
+
+        // bersihkan sock
+        sock = null;
+
+        // 1) LOGGED OUT / 401 → HARUS SCAN ULANG, JANGAN RECONNECT OTOMATIS
+        if (code === DisconnectReason.loggedOut || code === 401) {
           console.log(
-            "Sesi logout. Hapus ./baileys_auth_info lalu scan ulang."
+            "❌ Sesi logout. Hapus ./baileys_auth_info lalu jalankan ulang untuk scan QR baru.",
           );
+          return;
         }
+
+        // 2) CONNECTION REPLACED / 440 → ADA KONEKSI LAIN, JANGAN LOOP RECONNECT
+        if (code === DisconnectReason.connectionReplaced || code === 440) {
+          console.log(
+            "⚠️ Connection replaced (440). Ada koneksi lain dengan session ini. Tidak akan reconnect otomatis.",
+          );
+          return;
+        }
+
+        // 3) RESTART REQUIRED / 515 → BOLEH RECONNECT (normal habis pairing)
+        if (code === DisconnectReason.restartRequired || code === 515) {
+          console.log("🔁 Restart required oleh WhatsApp, reconnect...");
+          setTimeout(() => startBot(), 1500);
+          return;
+        }
+
+        // 4) ERROR / NETWORK LAIN → RECONNECT BIASA
+        console.log("🔁 Koneksi terputus (umum), coba reconnect...");
+        setTimeout(() => startBot(), 1500);
       }
     });
 
@@ -148,16 +181,18 @@ async function kirimLaporanWhatsApp(tanggal) {
     const presensiRonda = await getPresensiRondaByTanggal(tanggal);
     if (!presensiRonda || presensiRonda.length === 0) {
       console.log(`Tidak ada data presensi ronda untuk tanggal ${tanggal}.`);
-      return;
+    } else {
+      presensiRonda.sort(
+        (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah),
+      );
     }
 
-    presensiRonda.sort((a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah));
-
     let personilRonda = "Penanggung Jawab Ronda:\n";
-
+    // kalau mau aktifkan lagi daftar nama, tinggal uncomment:
     personilRonda += presensiRonda
       .map(
-        (item, idx) => `${idx + 1}. ${item.nomor_rumah} - ${item.nama_penghuni}`
+        (item, idx) =>
+          `${idx + 1}. ${item.nomor_rumah} - ${item.nama_penghuni}`,
       )
       .join("\n");
 
@@ -168,7 +203,7 @@ async function kirimLaporanWhatsApp(tanggal) {
     }
 
     laporanData.laporan.sort(
-      (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah)
+      (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah),
     );
 
     const hariList = [
@@ -225,18 +260,19 @@ async function resendLaporanWhatsApp(tanggal) {
     const presensiRonda = await getPresensiRondaByTanggal(tanggal);
     if (!presensiRonda || presensiRonda.length === 0) {
       console.log(`Tidak ada data presensi ronda untuk tanggal ${tanggal}.`);
-      return;
+    } else {
+      presensiRonda.sort(
+        (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah),
+      );
     }
 
-    presensiRonda.sort((a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah));
-
     let personilRonda = "Penanggung Jawab Ronda:\n";
-
-    personilRonda += presensiRonda
-      .map(
-        (item, idx) => `${idx + 1}. ${item.nomor_rumah} - ${item.nama_penghuni}`
-      )
-      .join("\n");
+    // personilRonda += presensiRonda
+    //   .map(
+    //     (item, idx) =>
+    //       `${idx + 1}. ${item.nomor_rumah} - ${item.nama_penghuni}`,
+    //   )
+    //   .join("\n");
 
     const laporanData = await ambilLaporanHarian(tanggal);
     if (!laporanData || laporanData.laporan.length === 0) {
@@ -245,7 +281,7 @@ async function resendLaporanWhatsApp(tanggal) {
     }
 
     laporanData.laporan.sort(
-      (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah)
+      (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah),
     );
 
     const hariList = [
@@ -295,6 +331,7 @@ module.exports = {
   startBot,
   onBotReady,
   getLatestQr,
+  getSock, // opsional
   kirimTesWhatsApp,
   kirimLaporanWhatsApp,
   resendLaporanWhatsApp,

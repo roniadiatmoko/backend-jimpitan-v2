@@ -24,6 +24,7 @@ const {
   ambilPengeluaran,
   simpanPengeluaran,
 } = require("./db");
+
 const {
   startBot,
   kirimTesWhatsApp,
@@ -31,7 +32,7 @@ const {
   resendLaporanWhatsApp,
   getLatestQr,
   onBotReady,
-} = require("./bailey");
+} = require("./bailey"); // pastikan nama file sesuai
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -53,8 +54,6 @@ app.get("/ping", (req, res) => {
   res.status(200).send("Server is alive!");
 });
 
-// keepAlive function removed - using external UptimeRobot instead
-
 // Endpoint untuk mengambil semua data
 app.get("/api/jimpitan", async (req, res) => {
   try {
@@ -66,7 +65,7 @@ app.get("/api/jimpitan", async (req, res) => {
   }
 });
 
-//Get harian jimpitan per bulan, yyyy-mm
+// Get harian jimpitan per bulan, yyyy-mm
 app.get("/api/jimpitan/:bulan", async (req, res) => {
   try {
     const data = await ambilJimpitanPerBulan(req.params.bulan);
@@ -77,7 +76,7 @@ app.get("/api/jimpitan/:bulan", async (req, res) => {
   }
 });
 
-//Get tanggal rapel by nomor rumah dan bulan
+// Get tanggal rapel by nomor rumah dan bulan
 app.get("/api/detail-rapel-per-rumah/:nomor_rumah/:bulan", async (req, res) => {
   try {
     const data = await ambilTanggalRapelTerisi(
@@ -91,9 +90,17 @@ app.get("/api/detail-rapel-per-rumah/:nomor_rumah/:bulan", async (req, res) => {
   }
 });
 
+// ==== WhatsApp bot state ====
 let isBotStarted = false;
+function ensureBotStarted() {
+  if (!isBotStarted) {
+    console.log(">>> Starting WhatsApp bot for first time...");
+    startBot();
+    isBotStarted = true;
+  }
+}
 
-// Endpoint untuk menyimpan data
+// Endpoint untuk menyimpan data + kirim laporan WA otomatis
 app.post("/api/jimpitan", async (req, res) => {
   try {
     const { secret_key, tanggal, diambil_oleh, data } = req.body;
@@ -108,21 +115,18 @@ app.post("/api/jimpitan", async (req, res) => {
 
     await hapusDanSimpanJimpitanHarian(tanggal, diambil_oleh, data);
 
-    // Start WhatsApp bot only when needed (first POST request)
-    if (!isBotStarted) {
-      console.log(">>> Starting WhatsApp bot for first time...");
-      startBot();
-      isBotStarted = true;
+    // Pastikan bot nyala, tapi hanya sekali
+    ensureBotStarted();
 
-      // Wait for bot to be actually ready before sending message
-      onBotReady(async () => {
+    // Kirim laporan ketika bot sudah ready
+    onBotReady(async () => {
+      try {
         console.log(">>> Bot is ready, sending WhatsApp message...");
         await kirimLaporanWhatsApp(tanggal);
-      });
-    } else {
-      // Bot already started, send message immediately
-      await kirimLaporanWhatsApp(tanggal);
-    }
+      } catch (err) {
+        console.error(">>> Gagal kirim laporan WA otomatis:", err);
+      }
+    });
 
     res.json({ status: "OK", total: data.length });
   } catch (err) {
@@ -134,12 +138,19 @@ app.post("/api/jimpitan", async (req, res) => {
 app.get("/api/resend-laporan-jimpitan/:tanggal", async (req, res) => {
   const { tanggal } = req.params;
   console.log(">>> Menerima permintaan kirim ulang laporan jimpitan");
-  startBot(); // Ensure bot is started
-  console.log(">>> Bot is ready, sending test WhatsApp message...");
+
+  ensureBotStarted();
+
   onBotReady(async () => {
-    await resendLaporanWhatsApp(tanggal);
+    try {
+      console.log(">>> Bot is ready, resend laporan jimpitan (testing)...");
+      await resendLaporanWhatsApp(tanggal);
+    } catch (err) {
+      console.error(">>> Gagal resend laporan WA (testing):", err);
+    }
   });
-  res.json({ status: "OK", message: "Tes dimulai, cek whatsapp" });
+
+  res.json({ status: "OK", message: "Proses resend dimulai, cek whatsapp" });
 });
 
 app.get("/api/kirim-laporan-jimpitan/:tanggal", async (req, res) => {
@@ -147,25 +158,42 @@ app.get("/api/kirim-laporan-jimpitan/:tanggal", async (req, res) => {
   console.log(
     ">>> Menerima permintaan kirim ulang laporan jimpitan grup utama",
   );
-  startBot(); // Ensure bot is started
-  console.log(">>> Bot is ready, sending test WhatsApp message...");
+
+  ensureBotStarted();
+
   onBotReady(async () => {
-    await kirimLaporanWhatsApp(tanggal);
+    try {
+      console.log(">>> Bot is ready, kirim laporan ke grup utama...");
+      await kirimLaporanWhatsApp(tanggal);
+    } catch (err) {
+      console.error(">>> Gagal kirim laporan WA (grup utama):", err);
+    }
   });
-  res.json({ status: "OK", message: "Tes dimulai, cek whatsapp" });
+
+  res.json({
+    status: "OK",
+    message: "Proses kirim laporan dimulai, cek whatsapp",
+  });
 });
 
 app.get("/api/tes-wa", async (req, res) => {
   console.log(">>> Menerima permintaan tes WhatsApp...");
-  startBot(); // Ensure bot is started
-  console.log(">>> Bot is ready, sending test WhatsApp message...");
+
+  ensureBotStarted();
+
   onBotReady(async () => {
-    await kirimTesWhatsApp("Test message from Jimpitan server");
+    try {
+      console.log(">>> Bot is ready, sending test WhatsApp message...");
+      await kirimTesWhatsApp("Test message from Jimpitan server");
+    } catch (err) {
+      console.error(">>> Gagal kirim pesan tes WA:", err);
+    }
   });
+
   res.json({ status: "OK", message: "Tes dimulai, cek whatsapp" });
 });
 
-// --- FUNGSI BARU: Endpoint untuk mengambil laporan harian berdasarkan tanggal ---
+// --- Endpoint untuk mengambil laporan harian berdasarkan tanggal ---
 app.get("/api/laporan/:tanggal", async (req, res) => {
   try {
     const { tanggal } = req.params;
@@ -195,7 +223,7 @@ app.get("/api/laporan/:tanggal", async (req, res) => {
   }
 });
 
-// --- FUNGSI BARU: Endpoint POST untuk fitur rapel ---
+// --- Endpoint POST untuk fitur rapel ---
 app.post("/api/rapel", async (req, res) => {
   try {
     const { secret_key, nomor_rumah, nominal, bulan } = req.body;
@@ -215,7 +243,6 @@ app.post("/api/rapel", async (req, res) => {
       });
     }
 
-    // const bulanSekarang = moment().tz("Asia/Jakarta").format("YYYY-MM");
     const bulanTerpilih = bulan;
 
     // 1. Ambil daftar tanggal jimpitan yang kosong di bulan ini
@@ -278,7 +305,7 @@ app.get("/api/rapel-harian/:tanggal", async (req, res) => {
   }
 });
 
-//Mengambil daftar rapel bulanan
+// Mengambil daftar rapel bulanan
 app.get("/api/rapel-bulanan/:bulan", async (req, res) => {
   try {
     const { bulan } = req.params;
@@ -291,7 +318,7 @@ app.get("/api/rapel-bulanan/:bulan", async (req, res) => {
   }
 });
 
-//Mengambil daftar pengeluaran
+// Mengambil daftar pengeluaran
 app.get("/api/pengeluaran/:bulan", async (req, res) => {
   try {
     const { bulan } = req.params;
@@ -304,7 +331,7 @@ app.get("/api/pengeluaran/:bulan", async (req, res) => {
   }
 });
 
-//Menyimpan pengeluaran
+// Menyimpan pengeluaran
 app.post("/api/pengeluaran", async (req, res) => {
   try {
     console.log(">>> Menerima POST pengeluaran:", req.body);
@@ -333,15 +360,17 @@ app.get("/qr", (req, res) => {
     Pragma: "no-cache",
     Expires: "0",
   });
-  const img = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+  const img = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+    qr,
+  )}`;
   res.send(`<h3>Scan QR WhatsApp</h3><img src="${img}" alt="qr" />`);
 });
 
-//hitung ulang nominal jimpitan harian
+// hitung ulang nominal jimpitan harian
 app.use("/api/jimpitan", hitungUlangRouter);
 app.use("/api", laporanRouter);
 
-//presensi ronda
+// presensi ronda
 app.use("/api/ronda", presensiRondaRouter);
 
 app.listen(PORT, "0.0.0.0", () => {
@@ -351,6 +380,6 @@ app.listen(PORT, "0.0.0.0", () => {
     `Endpoint Laporan: http://0.0.0.0:${PORT}/api/laporan/2025-08-04`,
   );
   console.log(
-    ">>> WhatsApp bot will start on-demand when first POST request is received",
+    ">>> WhatsApp bot will start on-demand when first POST/WA endpoint is called",
   );
 });
