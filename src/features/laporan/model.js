@@ -19,6 +19,10 @@ async function getHitungKekurangan(period) {
     SELECT date(d, '+1 day') FROM all_days
     WHERE d < date(?, '-1 day')          -- :nextMonthStart
   ),
+  pemutihan AS (
+    SELECT tanggal FROM tanggal_pemutihan
+    WHERE tanggal >= ? AND tanggal < ?
+  ),
   rumah AS (
     SELECT DISTINCT nomor_rumah FROM (
       SELECT nomor_rumah FROM jimpitan
@@ -40,6 +44,7 @@ async function getHitungKekurangan(period) {
   kalender AS (
     SELECT r.nomor_rumah, a.d AS tanggal
     FROM rumah r CROSS JOIN all_days a
+    WHERE a.d NOT IN (SELECT tanggal FROM pemutihan)
   )
   SELECT
     k.nomor_rumah,
@@ -56,14 +61,16 @@ async function getHitungKekurangan(period) {
   const params = [
     start,               // 1  all_days: start
     nextMonthStart,      // 2  all_days: nextMonthStart
-    start,               // 3  rumah (jimpitan)
-    nextMonthStart,      // 4
-    start,               // 5  rumah (rapel)
+    start,               // 3  pemutihan: start
+    nextMonthStart,      // 4  pemutihan: nextMonthStart
+    start,               // 5  rumah (jimpitan)
     nextMonthStart,      // 6
-    start,               // 7  terisi (jimpitan)
+    start,               // 7  rumah (rapel)
     nextMonthStart,      // 8
-    start,               // 9  terisi (rapel)
-    nextMonthStart       // 10
+    start,               // 9  terisi (jimpitan)
+    nextMonthStart,      // 10
+    start,               // 11  terisi (rapel)
+    nextMonthStart       // 12
   ];
 
   const rows = await all(sql, params);
