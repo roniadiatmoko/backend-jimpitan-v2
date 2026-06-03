@@ -23,6 +23,7 @@ const {
   ambilTanggalRapelTerisi,
   ambilPengeluaran,
   simpanPengeluaran,
+  hapusPengeluaran,
 } = require("./db");
 
 const {
@@ -347,6 +348,21 @@ app.post("/api/pengeluaran", async (req, res) => {
     res.json({ status: "OK" });
   } catch (err) {
     console.error("Error saat menyimpan pengeluaran:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+// Menghapus pengeluaran berdasarkan id
+app.delete("/api/pengeluaran/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await hapusPengeluaran(id);
+    if (!deleted) {
+      return res.status(404).json({ status: "NOT_FOUND", message: "Pengeluaran tidak ditemukan." });
+    }
+    res.json({ status: "OK", message: "Pengeluaran berhasil dihapus." });
+  } catch (err) {
+    console.error("Error saat menghapus pengeluaran:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
   }
 });

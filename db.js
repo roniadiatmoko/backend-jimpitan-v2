@@ -369,6 +369,15 @@ function simpanPengeluaran(tanggal, nominal, penanggung_jawab, keterangan, bukti
   })
 }
 
+function hapusPengeluaran(id) {
+  return new Promise((resolve, reject) => {
+    db.run("DELETE FROM pengeluaran WHERE id = ?", [id], function (err) {
+      if (err) return reject(err);
+      resolve(this.changes);
+    });
+  });
+}
+
 module.exports = {
   db,
   ambilSemuaData,
@@ -382,4 +391,5 @@ module.exports = {
   ambilTanggalRapelTerisi,
   ambilPengeluaran,
   simpanPengeluaran,
+  hapusPengeluaran,
 };
