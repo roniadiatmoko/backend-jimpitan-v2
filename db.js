@@ -61,6 +61,16 @@ db.serialize(() => {
       UNIQUE(tanggal, nomor_rumah)
     )
     `)
+
+  //table tanggal pemutihan
+  db.run(`
+    CREATE TABLE IF NOT EXISTS tanggal_pemutihan (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tanggal TEXT,
+      keterangan TEXT,
+      created_at TEXT
+    )
+  `)
 });
 
 // FUNGSI UTAMA: Hapus data untuk tanggal tertentu, lalu masukkan data baru
@@ -372,6 +382,62 @@ function simpanPengeluaran(tanggal, nominal, penanggung_jawab, keterangan, bukti
 function hapusPengeluaran(id) {
   return new Promise((resolve, reject) => {
     db.run("DELETE FROM pengeluaran WHERE id = ?", [id], function (err) {
+      if (err) return reject(err);
+      resolve(this.changes);
+    });
+  });
+}
+
+// --- TANGGAL PEMUTIHAN HELPERS ---
+function simpanTanggalPemutihan(tanggal, keterangan) {
+  return new Promise((resolve, reject) => {
+    const createdAt = new Date().toISOString();
+    db.run(
+      "INSERT INTO tanggal_pemutihan (tanggal, keterangan, created_at) VALUES (?, ?, ?)",
+      [tanggal, keterangan, createdAt],
+      function (err) {
+        if (err) return reject(err);
+        resolve(this.lastID);
+      },
+    );
+  });
+}
+
+function ambilTanggalPemutihan(bulan, tahun) {
+  return new Promise((resolve, reject) => {
+    if (tahun) {
+      db.all(
+        "SELECT * FROM tanggal_pemutihan WHERE SUBSTR(tanggal,1,4) = ? ORDER BY tanggal ASC",
+        [String(tahun)],
+        (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        },
+      );
+    } else if (bulan) {
+      db.all(
+        "SELECT * FROM tanggal_pemutihan WHERE SUBSTR(tanggal,1,7) = ? ORDER BY tanggal ASC",
+        [bulan],
+        (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        },
+      );
+    } else {
+      db.all(
+        "SELECT * FROM tanggal_pemutihan ORDER BY tanggal ASC",
+        (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        },
+      );
+    }
+  });
+}
+
+function hapusTanggalPemutihan(id) {
+  return new Promise((resolve, reject) => {
+    db.run("DELETE FROM tanggal_pemutihan WHERE id = ?", [id], function (err) {
       if (err) return reject(err);
       resolve(this.changes);
     });

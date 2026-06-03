@@ -24,6 +24,9 @@ const {
   ambilPengeluaran,
   simpanPengeluaran,
   hapusPengeluaran,
+  simpanTanggalPemutihan,
+  ambilTanggalPemutihan,
+  hapusTanggalPemutihan,
 } = require("./db");
 
 const {
@@ -348,6 +351,41 @@ app.post("/api/pengeluaran", async (req, res) => {
     res.json({ status: "OK" });
   } catch (err) {
     console.error("Error saat menyimpan pengeluaran:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+// --- Tanggal Pemutihan: list, create, delete ---
+app.get("/api/tanggal-pemutihan", async (req, res) => {
+  try {
+    const { bulan, tahun } = req.query; // optional: yyyy-mm or yyyy
+    const rows = await ambilTanggalPemutihan(bulan, tahun);
+    res.json({ status: "OK", data: rows });
+  } catch (err) {
+    console.error("Error saat mengambil tanggal pemutihan:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.post("/api/tanggal-pemutihan", async (req, res) => {
+  try {
+    const { tanggal, keterangan } = req.body;
+    const id = await simpanTanggalPemutihan(tanggal, keterangan);
+    res.json({ status: "OK", id });
+  } catch (err) {
+    console.error("Error saat menyimpan tanggal pemutihan:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.delete("/api/tanggal-pemutihan/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await hapusTanggalPemutihan(id);
+    if (!deleted) return res.status(404).json({ status: "NOT_FOUND" });
+    res.json({ status: "OK" });
+  } catch (err) {
+    console.error("Error saat menghapus tanggal pemutihan:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
   }
 });
