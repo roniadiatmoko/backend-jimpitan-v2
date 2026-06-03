@@ -369,7 +369,19 @@ app.get("/api/tanggal-pemutihan", async (req, res) => {
 
 app.post("/api/tanggal-pemutihan", async (req, res) => {
   try {
-    const { tanggal, keterangan } = req.body;
+    // Support payloads from frontend:
+    // - array in `rowsToSave` or `rowToSave`
+    // - single object { tanggal, keterangan }
+    const payload = req.body.rowsToSave || req.body.rowToSave || req.body;
+
+    if (Array.isArray(payload)) {
+      const ids = await Promise.all(
+        payload.map((r) => simpanTanggalPemutihan(r.tanggal, r.keterangan)),
+      );
+      return res.json({ status: "OK", ids });
+    }
+
+    const { tanggal, keterangan } = payload;
     const id = await simpanTanggalPemutihan(tanggal, keterangan);
     res.json({ status: "OK", id });
   } catch (err) {

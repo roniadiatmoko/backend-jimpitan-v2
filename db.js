@@ -70,7 +70,10 @@ db.serialize(() => {
       keterangan TEXT,
       created_at TEXT
     )
-  `)
+  `);
+  db.run(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_tanggal_pemutihan_tanggal ON tanggal_pemutihan(tanggal)",
+  );
 });
 
 // FUNGSI UTAMA: Hapus data untuk tanggal tertentu, lalu masukkan data baru
@@ -393,11 +396,11 @@ function simpanTanggalPemutihan(tanggal, keterangan) {
   return new Promise((resolve, reject) => {
     const createdAt = new Date().toISOString();
     db.run(
-      "INSERT INTO tanggal_pemutihan (tanggal, keterangan, created_at) VALUES (?, ?, ?)",
+      "INSERT OR IGNORE INTO tanggal_pemutihan (tanggal, keterangan, created_at) VALUES (?, ?, ?)",
       [tanggal, keterangan, createdAt],
       function (err) {
         if (err) return reject(err);
-        resolve(this.lastID);
+        resolve(this.lastID || null);
       },
     );
   });
@@ -458,4 +461,7 @@ module.exports = {
   ambilPengeluaran,
   simpanPengeluaran,
   hapusPengeluaran,
+  simpanTanggalPemutihan,
+  ambilTanggalPemutihan,
+  hapusTanggalPemutihan,
 };
