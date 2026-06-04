@@ -27,6 +27,10 @@ const {
   simpanTanggalPemutihan,
   ambilTanggalPemutihan,
   hapusTanggalPemutihan,
+  simpanRefWarga,
+  updateRefWarga,
+  ambilRefWarga,
+  hapusRefWarga,
 } = require("./db");
 
 const {
@@ -34,6 +38,7 @@ const {
   kirimTesWhatsApp,
   kirimLaporanWhatsApp,
   resendLaporanWhatsApp,
+  kirimPesanWhatsApp,
   getLatestQr,
   onBotReady,
 } = require("./bailey"); // pastikan nama file sesuai
@@ -195,6 +200,28 @@ app.get("/api/tes-wa", async (req, res) => {
   });
 
   res.json({ status: "OK", message: "Tes dimulai, cek whatsapp" });
+});
+
+// Kirim pesan WhatsApp ke nomor individu (text panjang didukung)
+app.post("/api/kirim-whatsapp", async (req, res) => {
+  try {
+    const { secret_key, pesan, no_hp } = req.body;
+
+    if (secret_key !== "rahasiakita123") {
+      return res.status(401).json({ status: "UNAUTHORIZED" });
+    }
+
+    if (!pesan || !no_hp) {
+      return res.status(400).json({ status: "ERROR", message: "Parameter 'pesan' dan 'no_hp' wajib." });
+    }
+
+    await kirimPesanWhatsApp(pesan, no_hp);
+
+    res.json({ status: "OK", message: "Pesan dijadwalkan dan dikirim." });
+  } catch (err) {
+    console.error("Error saat mengirim pesan WhatsApp:", err);
+    res.status(500).json({ status: "ERROR", message: String(err) });
+  }
 });
 
 // --- Endpoint untuk mengambil laporan harian berdasarkan tanggal ---
@@ -359,6 +386,72 @@ app.post("/api/pengeluaran", async (req, res) => {
     res.json({ status: "OK" });
   } catch (err) {
     console.error("Error saat menyimpan pengeluaran:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+// --- API ref_warga ---
+app.get("/api/ref-warga", async (req, res) => {
+  try {
+    const data = await ambilRefWarga();
+    res.json({ status: "OK", data });
+  } catch (err) {
+    console.error("Error saat mengambil ref_warga:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.get("/api/ref-warga/:nomor", async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await ambilRefWarga(nomor);
+    if (!data) {
+      return res.status(404).json({ status: "NOT_FOUND", message: "Warga tidak ditemukan." });
+    }
+    res.json({ status: "OK", data });
+  } catch (err) {
+    console.error("Error saat mengambil ref_warga per nomor:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.post("/api/ref-warga", async (req, res) => {
+  try {
+    const { nama, sudah_menghuni, tanggal_huni, no_hp } = req.body;
+    const nomor = await simpanRefWarga(nama, sudah_menghuni, tanggal_huni, no_hp);
+    res.json({ status: "OK", nomor });
+  } catch (err) {
+    console.error("Error saat menyimpan ref_warga:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.put("/api/ref-warga/:nomor", async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { nomor: newNomor, nama, sudah_menghuni, tanggal_huni, no_hp } = req.body;
+    const targetNomor = newNomor != null ? newNomor : nomor;
+    const changes = await updateRefWarga(nomor, targetNomor, nama, sudah_menghuni, tanggal_huni, no_hp);
+    if (!changes) {
+      return res.status(404).json({ status: "NOT_FOUND", message: "Warga tidak ditemukan atau tidak ada perubahan." });
+    }
+    res.json({ status: "OK", changes });
+  } catch (err) {
+    console.error("Error saat mengupdate ref_warga:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.delete("/api/ref-warga/:nomor", async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const changes = await hapusRefWarga(nomor);
+    if (!changes) {
+      return res.status(404).json({ status: "NOT_FOUND", message: "Warga tidak ditemukan." });
+    }
+    res.json({ status: "OK", changes });
+  } catch (err) {
+    console.error("Error saat menghapus ref_warga:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
   }
 });

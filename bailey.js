@@ -170,6 +170,35 @@ async function kirimTesWhatsApp(message) {
   }
 }
 
+// ====== KIRIM PESAN KE NOMOR INDIVIDU DENGAN DELAY ======
+async function kirimPesanWhatsApp(pesan, no_hp) {
+  try {
+    // Pastikan bot terhubung; jika belum, trigger start dan tunggu ready
+    if (!sock || !sock.user) {
+      console.log("Bot belum terhubung. Menjalankan startBot dan menunggu koneksi...");
+      startBot();
+      await new Promise((resolve) => onBotReady(resolve));
+    }
+
+    // Normalisasi nomor: hapus non-digit, ubah leading 0 -> 62 (Indonesia) jika ada
+    let raw = String(no_hp || "").replace(/[^0-9]/g, "");
+    if (!raw) throw new Error("Nomor telepon tidak valid");
+    if (raw.startsWith("0")) raw = `62${raw.slice(1)}`;
+    const jid = raw.includes("@") ? raw : `${raw}@s.whatsapp.net`;
+
+    console.log(`Menunggu 15 detik sebelum mengirim pesan ke ${jid}...`);
+    await new Promise((r) => setTimeout(r, 15000));
+
+    // Kirim teks panjang juga didukung oleh field `text`
+    await sock.sendMessage(jid, { text: pesan });
+    console.log("Pesan WhatsApp berhasil dikirim ke", jid);
+    return true;
+  } catch (error) {
+    console.error("Gagal mengirim pesan WhatsApp:", error);
+    throw error;
+  }
+}
+
 // ====== KIRIM LAPORAN ======
 async function kirimLaporanWhatsApp(tanggal) {
   try {
@@ -335,4 +364,5 @@ module.exports = {
   kirimTesWhatsApp,
   kirimLaporanWhatsApp,
   resendLaporanWhatsApp,
+  kirimPesanWhatsApp,
 };

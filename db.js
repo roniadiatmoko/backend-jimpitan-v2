@@ -74,6 +74,17 @@ db.serialize(() => {
   db.run(
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_tanggal_pemutihan_tanggal ON tanggal_pemutihan(tanggal)",
   );
+
+  //table referensi warga
+  db.run(`
+    CREATE TABLE IF NOT EXISTS ref_warga (
+      nomor INTEGER PRIMARY KEY,
+      nama TEXT,
+      sudah_menghuni INTEGER,
+      tanggal_huni DATE,
+      no_hp TEXT
+    )
+  `);
 });
 
 // FUNGSI UTAMA: Hapus data untuk tanggal tertentu, lalu masukkan data baru
@@ -447,6 +458,58 @@ function hapusTanggalPemutihan(id) {
   });
 }
 
+function simpanRefWarga(nama, sudah_menghuni, tanggal_huni, no_hp) {
+  return new Promise((resolve, reject) => {
+    const createdAt = new Date().toISOString();
+    db.run(
+      "INSERT INTO ref_warga (nama, sudah_menghuni, tanggal_huni, no_hp) VALUES (?, ?, ?, ?)",
+      [nama, sudah_menghuni, tanggal_huni, no_hp],
+      function (err) {
+        if (err) return reject(err);
+        resolve(this.lastID || null);
+      },
+    );
+  });
+}
+
+function updateRefWarga(currentNomor, newNomor, nama, sudah_menghuni, tanggal_huni, no_hp) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      "UPDATE ref_warga SET nomor = ?, nama = ?, sudah_menghuni = ?, tanggal_huni = ?, no_hp = ? WHERE nomor = ?",
+      [newNomor, nama, sudah_menghuni, tanggal_huni, no_hp, currentNomor],
+      function (err) {
+        if (err) return reject(err);
+        resolve(this.changes);
+      },
+    );
+  });
+}
+
+function ambilRefWarga(nomor) {
+  return new Promise((resolve, reject) => {
+    if (nomor != null) {
+      db.get("SELECT * FROM ref_warga WHERE nomor = ?", [nomor], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    } else {
+      db.all("SELECT * FROM ref_warga ORDER BY nomor ASC", (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    }
+  });
+}
+
+function hapusRefWarga(nomor) {
+  return new Promise((resolve, reject) => {
+    db.run("DELETE FROM ref_warga WHERE nomor = ?", [nomor], function (err) {
+      if (err) return reject(err);
+      resolve(this.changes);
+    });
+  });
+}
+
 module.exports = {
   db,
   ambilSemuaData,
@@ -464,4 +527,8 @@ module.exports = {
   simpanTanggalPemutihan,
   ambilTanggalPemutihan,
   hapusTanggalPemutihan,
+  simpanRefWarga,
+  updateRefWarga,
+  ambilRefWarga,
+  hapusRefWarga,
 };
