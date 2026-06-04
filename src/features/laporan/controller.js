@@ -1,4 +1,4 @@
-const { getHitungKekurangan } = require("./model");
+const { getHitungKekurangan, getHitungKekuranganTahun } = require("./model");
 
 function isValidPeriod(period) {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(period);
@@ -33,4 +33,25 @@ async function hitungKekurangan(req, res, next) {
 
 module.exports = {
   hitungKekurangan,
+  hitungKekuranganTahun,
 };
+
+function isValidYear(year) {
+  return /^\d{4}$/.test(String(year));
+}
+
+async function hitungKekuranganTahun(req, res, next) {
+  try {
+    const { year } = req.params;
+
+    if (!isValidYear(year)) {
+      return res.status(400).json({ ok: false, message: "Param 'year' harus format YYYY, contoh: 2025" });
+    }
+
+    const data = await getHitungKekuranganTahun(year);
+    return res.json({ ok: true, year, data });
+  } catch (err) {
+    console.error("[hitungKekuranganTahun] ERROR:", err);
+    return res.status(500).json({ ok: false, message: "Terjadi kesalahan saat menghitung kekurangan tahun", error: String(err) });
+  }
+}
