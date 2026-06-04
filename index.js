@@ -263,9 +263,17 @@ app.post("/api/rapel", async (req, res) => {
     );
     console.log("tanggal rapel terisi:", tanggalRapelTerisi);
 
-    // 3. Gabungkan kedua daftar untuk menemukan hari yang benar-benar kosong
+    // 2b. Ambil daftar tanggal pemutihan di bulan ini
+    const tanggalPemutihanRows = await ambilTanggalPemutihan(bulanTerpilih);
+    const tanggalPemutihan = tanggalPemutihanRows.map((row) => row.tanggal);
+    console.log("tanggal pemutihan:", tanggalPemutihan);
+
+    // 3. Gabungkan kedua daftar untuk menemukan hari yang benar-benar kosong,
+    //    lalu kecualikan tanggal pemutihan sehingga tidak disimpan ke rapel.
     const hariUntukDirapel = tanggalJimpitanKosong.filter(
-      (tanggal) => !tanggalRapelTerisi.includes(tanggal),
+      (tanggal) =>
+        !tanggalRapelTerisi.includes(tanggal) &&
+        !tanggalPemutihan.includes(tanggal),
     );
     console.log("hari untuk dirapel:", hariUntukDirapel);
 
