@@ -44,6 +44,12 @@ const {
   onBotReady,
 } = require("./bailey"); // pastikan nama file sesuai
 
+const {
+  kirimLaporanTelegram,
+  kirimDatabaseTelegram,
+  kirimRekapBulananJikaAkhirBulan,
+} = require("./telegram");
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -138,6 +144,16 @@ app.post("/api/jimpitan", async (req, res) => {
       }
     });
 
+    // Backup: selalu kirim laporan yang sama ke Telegram, independen dari status bot WhatsApp
+    kirimLaporanTelegram(tanggal).catch((err) =>
+      console.error(">>> Gagal kirim backup laporan ke Telegram:", err),
+    );
+
+    // Jika tanggal adalah hari terakhir bulan ini, kirim rekap bulanan + export DB ke Telegram
+    kirimRekapBulananJikaAkhirBulan(tanggal).catch((err) =>
+      console.error(">>> Gagal kirim rekap bulanan ke Telegram:", err),
+    );
+
     res.json({ status: "OK", total: data.length });
   } catch (err) {
     console.error("Error saat menyimpan data jimpitan:", err);
@@ -201,6 +217,47 @@ app.get("/api/tes-wa", async (req, res) => {
   });
 
   res.json({ status: "OK", message: "Tes dimulai, cek whatsapp" });
+});
+
+// Tes kirim laporan harian jimpitan ke Telegram untuk tanggal tertentu (yyyy-MM-dd)
+app.get("/api/tes-telegram-laporan/:tanggal", async (req, res) => {
+  try {
+    const { tanggal } = req.params;
+
+    const parsedDate = parse(tanggal, "yyyy-MM-dd", new Date());
+    if (!isValid(parsedDate)) {
+      return res.status(400).json({
+        status: "ERROR",
+        message: "Format tanggal tidak valid. Gunakan YYYY-MM-DD.",
+      });
+    }
+
+    await kirimLaporanTelegram(tanggal);
+    res.json({ status: "OK", message: "Laporan harian dikirim ke Telegram, cek chat." });
+  } catch (err) {
+    console.error("Error saat tes kirim laporan Telegram:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+// Tes kirim export database bulanan ke Telegram untuk bulan tertentu (yyyy-MM)
+app.get("/api/tes-telegram-database/:bulan", async (req, res) => {
+  try {
+    const { bulan } = req.params;
+
+    if (!/^\d{4}-\d{2}$/.test(bulan)) {
+      return res.status(400).json({
+        status: "ERROR",
+        message: "Format bulan tidak valid. Gunakan YYYY-MM.",
+      });
+    }
+
+    await kirimDatabaseTelegram(bulan);
+    res.json({ status: "OK", message: "Export database dikirim ke Telegram, cek chat." });
+  } catch (err) {
+    console.error("Error saat tes kirim database Telegram:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
 });
 
 // Kirim pesan WhatsApp ke nomor individu (text panjang didukung)

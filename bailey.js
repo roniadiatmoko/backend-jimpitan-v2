@@ -6,6 +6,7 @@ const { ambilLaporanHarian } = require("./db");
 const {
   getPresensiRondaByTanggal,
 } = require("./src/features/presensi-ronda/model");
+const { buildLaporanHarianText } = require("./src/utils/laporanHarianText");
 
 const logger = P({ level: "info" });
 const msgRetryCounterCache = new NodeCache();
@@ -216,15 +217,6 @@ async function kirimLaporanWhatsApp(tanggal) {
       );
     }
 
-    let personilRonda = "Penanggung Jawab Ronda:\n";
-    // kalau mau aktifkan lagi daftar nama, tinggal uncomment:
-    personilRonda += presensiRonda
-      .map(
-        (item, idx) =>
-          `${idx + 1}. ${item.nomor_rumah} - ${item.nama_penghuni}`,
-      )
-      .join("\n");
-
     const laporanData = await ambilLaporanHarian(tanggal);
     if (!laporanData || laporanData.laporan.length === 0) {
       console.log(`Tidak ada data jimpitan untuk tanggal ${tanggal}.`);
@@ -235,35 +227,12 @@ async function kirimLaporanWhatsApp(tanggal) {
       (a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah),
     );
 
-    const hariList = [
-      "Minggu",
-      "Senin",
-      "Selasa",
-      "Rabu",
-      "Kamis",
-      "Jumat",
-      "Sabtu",
-    ];
-    const d = new Date(tanggal);
-    const namaHari = hariList[d.getDay()];
-
-    let laporanText = `*Laporan Jimpitan Harian*\n\n`;
-    laporanText += `Tanggal: ${namaHari}, ${tanggal}\n\n`;
-    laporanText += `${personilRonda}\n`;
-    laporanText += `------------------------------------\n`;
-    laporanText += `💰 Total Terkumpul: Rp ${laporanData.totalUang.toLocaleString()}\n`;
-    laporanText += `✅ Terisi: ${laporanData.totalTerisi} rumah\n`;
-    laporanText += `📦 Sudah Rapel: ${laporanData.totalRapel} rumah\n`;
-    laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah\n`;
-    laporanText += `------------------------------------\n\n`;
-    laporanText += `*Detail Jimpitan Harian:*\n`;
-    laporanData.laporan.forEach((item) => {
-      const status =
-        item.status_terisi == "Rapel" ? "Sudah Rapel" : item.status_terisi;
-      laporanText += `- Rumah ${item.nomor_rumah} (${item.nama_pengisi}): *${status}*\n`;
-    });
-    laporanText += `------------------------------------\n\n`;
-    laporanText += `_Informasi: ini adalah pesan otomatis dari aplikasi jimpitan GBK Tempel 2_\n`;
+    const laporanText = buildLaporanHarianText(
+      tanggal,
+      laporanData,
+      presensiRonda,
+      "Informasi: ini adalah pesan otomatis dari aplikasi jimpitan GBK Tempel 2",
+    );
 
     const groupId = process.env.GROUP_ID;
     if (!groupId) {
