@@ -9,6 +9,7 @@ const { format, isValid, parse } = require("date-fns");
 const hitungUlangRouter = require("./src/features/hitung_ulang_jimpitan_harian/routes");
 const laporanRouter = require("./src/features/laporan/routes");
 const presensiRondaRouter = require("./src/features/presensi-ronda/routes");
+const rekapRouter = require("./src/features/rekap/routes");
 
 // Import fungsi dari db.js
 const {
@@ -539,6 +540,9 @@ app.use("/api", laporanRouter);
 
 // presensi ronda
 app.use("/api/ronda", presensiRondaRouter);
+
+// rekap saldo bulanan
+app.use("/api", rekapRouter);
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server berjalan di http://0.0.0.0:${PORT}`);

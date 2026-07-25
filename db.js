@@ -85,6 +85,29 @@ db.serialize(() => {
       no_hp TEXT
     )
   `);
+
+  //table rekap saldo bulanan
+  db.run(`
+    CREATE TABLE IF NOT EXISTS rekap (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bulan TEXT,
+      tahun TEXT,
+      saldo_sebelumnya REAL,
+      pemasukan REAL,
+      pengeluaran REAL,
+      sisa_saldo REAL,
+      keterangan TEXT,
+      is_kunci_sinkron INTEGER DEFAULT 0
+    )
+  `);
+  db.run(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_rekap_periode ON rekap(bulan, tahun)",
+  );
+  // Migrasi untuk database lama yang belum punya kolom is_kunci_sinkron
+  db.run(
+    "ALTER TABLE rekap ADD COLUMN is_kunci_sinkron INTEGER DEFAULT 0",
+    () => {},
+  );
 });
 
 // FUNGSI UTAMA: Hapus data untuk tanggal tertentu, lalu masukkan data baru
