@@ -1,11 +1,11 @@
 entrypoint = "index.js"
 run = "node index.js"
 language = "nodejs"
-modules = ["nodejs-20"]
+modules = ["nodejs-22"]
 
 [nix]
 channel = "stable-23_11"
-packages = ["nodejs-20_x", "sqlite-interactive"]
+packages = ["nodejs-22_x", "sqlite-interactive"]
 
 [deployment]
 deploymentTarget = "autoscale"
