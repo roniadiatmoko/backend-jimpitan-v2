@@ -4,6 +4,7 @@ const sqlite3 = require("sqlite3").verbose();
 const db = new sqlite3.Database("./db.sqlite");
 const { format, lastDayOfMonth } = require("date-fns");
 const { id } = require("date-fns/locale");
+const { enqueueMirror, withTransaction } = require("./src/utils/postgresMirror");
 
 // Buat tabel jika belum ada
 db.serialize(() => {
@@ -150,8 +151,41 @@ function hapusDanSimpanJimpitanHarian(tanggal, diambil_oleh, data) {
 
         Promise.all(promises)
           .then(() => {
-            stmt.finalize();
-            resolve();
+            stmt.finalize((finalizeError) => {
+              if (finalizeError) return reject(finalizeError);
+
+              db.all(
+                "SELECT id, tanggal, nomor_rumah, nama_pengisi, jumlah, diambil_oleh, waktu_input FROM jimpitan WHERE tanggal = ? ORDER BY id",
+                [tanggal],
+                (readError, rows) => {
+                  if (readError) return reject(readError);
+
+                  enqueueMirror(`jimpitan ${tanggal}`, (pool) =>
+                    withTransaction(pool, async (client) => {
+                      await client.query(
+                        "DELETE FROM jimpitan WHERE tanggal = $1",
+                        [tanggal],
+                      );
+                      for (const row of rows) {
+                        await client.query(
+                          "INSERT INTO jimpitan (id, tanggal, nomor_rumah, nama_pengisi, jumlah, diambil_oleh, waktu_input) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                          [
+                            row.id,
+                            row.tanggal,
+                            row.nomor_rumah,
+                            row.nama_pengisi,
+                            row.jumlah,
+                            row.diambil_oleh,
+                            row.waktu_input,
+                          ],
+                        );
+                      }
+                    }),
+                  );
+                  resolve();
+                },
+              );
+            });
           })
           .catch((err) => {
             stmt.finalize();
@@ -254,11 +288,20 @@ function simpanRapelHarian(nomor_rumah, tanggal) {
     const stmt = db.prepare(
       "INSERT OR IGNORE INTO rapel (nomor_rumah, tanggal) VALUES (?, ?)",
     );
-    stmt.run([nomor_rumah, tanggal], (err) => {
-      if (err) reject(err);
-      else resolve();
+    stmt.run([nomor_rumah, tanggal], function (err) {
+      if (err) return reject(err);
+      const id = this.lastID;
+      stmt.finalize((finalizeError) => {
+        if (finalizeError) return reject(finalizeError);
+        enqueueMirror(`rapel ${id}`, (pool) =>
+          pool.query(
+            "INSERT INTO rapel (id, nomor_rumah, tanggal) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING",
+            [id, nomor_rumah, tanggal],
+          ),
+        );
+        resolve();
+      });
     });
-    stmt.finalize();
   });
 }
 
@@ -408,9 +451,18 @@ function simpanPengeluaran(tanggal, nominal, penanggung_jawab, keterangan, bukti
     db.run(
       "INSERT INTO pengeluaran (tanggal, nominal, penanggung_jawab, keterangan, bukti_foto, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       [tanggal, nominal, penanggung_jawab, keterangan, bukti_foto, createdAt],
-      (err) => {
+      function (err) {
         if (err) reject(err);
-        else resolve();
+        else {
+          const id = this.lastID;
+          enqueueMirror(`pengeluaran ${id}`, (pool) =>
+            pool.query(
+              "INSERT INTO pengeluaran (id, tanggal, nominal, penanggung_jawab, keterangan, bukti_foto, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO UPDATE SET tanggal = EXCLUDED.tanggal, nominal = EXCLUDED.nominal, penanggung_jawab = EXCLUDED.penanggung_jawab, keterangan = EXCLUDED.keterangan, bukti_foto = EXCLUDED.bukti_foto, created_at = EXCLUDED.created_at",
+              [id, tanggal, nominal, penanggung_jawab, keterangan, bukti_foto, createdAt],
+            ),
+          );
+          resolve();
+        }
       }
     )
   })
@@ -420,6 +472,9 @@ function hapusPengeluaran(id) {
   return new Promise((resolve, reject) => {
     db.run("DELETE FROM pengeluaran WHERE id = ?", [id], function (err) {
       if (err) return reject(err);
+      enqueueMirror(`hapus pengeluaran ${id}`, (pool) =>
+        pool.query("DELETE FROM pengeluaran WHERE id = $1", [id]),
+      );
       resolve(this.changes);
     });
   });
@@ -434,7 +489,28 @@ function simpanTanggalPemutihan(tanggal, keterangan) {
       [tanggal, keterangan, createdAt],
       function (err) {
         if (err) return reject(err);
-        resolve(this.lastID || null);
+        db.get(
+          "SELECT id, tanggal, keterangan, created_at FROM tanggal_pemutihan WHERE tanggal = ?",
+          [tanggal],
+          (readError, row) => {
+            if (readError) return reject(readError);
+            if (row) {
+              enqueueMirror(`tanggal pemutihan ${tanggal}`, (pool) =>
+                withTransaction(pool, async (client) => {
+                  await client.query(
+                    "DELETE FROM tanggal_pemutihan WHERE tanggal = $1",
+                    [tanggal],
+                  );
+                  await client.query(
+                    "INSERT INTO tanggal_pemutihan (id, tanggal, keterangan, created_at) VALUES ($1, $2, $3, $4)",
+                    [row.id, row.tanggal, row.keterangan, row.created_at],
+                  );
+                }),
+              );
+            }
+            resolve(row?.id || this.lastID || null);
+          },
+        );
       },
     );
   });
@@ -476,6 +552,9 @@ function hapusTanggalPemutihan(id) {
   return new Promise((resolve, reject) => {
     db.run("DELETE FROM tanggal_pemutihan WHERE id = ?", [id], function (err) {
       if (err) return reject(err);
+      enqueueMirror(`hapus tanggal pemutihan ${id}`, (pool) =>
+        pool.query("DELETE FROM tanggal_pemutihan WHERE id = $1", [id]),
+      );
       resolve(this.changes);
     });
   });
@@ -489,7 +568,14 @@ function simpanRefWarga(nama, sudah_menghuni, tanggal_huni, no_hp) {
       [nama, sudah_menghuni, tanggal_huni, no_hp],
       function (err) {
         if (err) return reject(err);
-        resolve(this.lastID || null);
+        const nomor = this.lastID;
+        enqueueMirror(`warga ${nomor}`, (pool) =>
+          pool.query(
+            "INSERT INTO ref_warga (nomor, nama, sudah_menghuni, tanggal_huni, no_hp) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (nomor) DO UPDATE SET nama = EXCLUDED.nama, sudah_menghuni = EXCLUDED.sudah_menghuni, tanggal_huni = EXCLUDED.tanggal_huni, no_hp = EXCLUDED.no_hp",
+            [nomor, nama, sudah_menghuni, tanggal_huni, no_hp],
+          ),
+        );
+        resolve(nomor || null);
       },
     );
   });
@@ -502,6 +588,12 @@ function updateRefWarga(currentNomor, newNomor, nama, sudah_menghuni, tanggal_hu
       [newNomor, nama, sudah_menghuni, tanggal_huni, no_hp, currentNomor],
       function (err) {
         if (err) return reject(err);
+        enqueueMirror(`ubah warga ${currentNomor}`, (pool) =>
+          pool.query(
+            "UPDATE ref_warga SET nomor = $1, nama = $2, sudah_menghuni = $3, tanggal_huni = $4, no_hp = $5 WHERE nomor = $6",
+            [newNomor, nama, sudah_menghuni, tanggal_huni, no_hp, currentNomor],
+          ),
+        );
         resolve(this.changes);
       },
     );
@@ -528,6 +620,9 @@ function hapusRefWarga(nomor) {
   return new Promise((resolve, reject) => {
     db.run("DELETE FROM ref_warga WHERE nomor = ?", [nomor], function (err) {
       if (err) return reject(err);
+      enqueueMirror(`hapus warga ${nomor}`, (pool) =>
+        pool.query("DELETE FROM ref_warga WHERE nomor = $1", [nomor]),
+      );
       resolve(this.changes);
     });
   });

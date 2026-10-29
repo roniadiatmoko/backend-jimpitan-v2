@@ -1,4 +1,5 @@
 const { get, run } = require("../../db");
+const { enqueueMirror } = require("../../utils/postgresMirror");
 
 function getPeriodeSebelumnya(bulan, tahun) {
   let b = parseInt(bulan, 10) - 1;
@@ -74,6 +75,26 @@ async function upsertRekap(
         keterangan,
         kunciSinkron,
       ],
+    );
+  }
+
+  const savedRekap = await getRekapByPeriode(bulan, tahun);
+  if (savedRekap) {
+    enqueueMirror(`rekap ${bulan}-${tahun}`, (pool) =>
+      pool.query(
+        "INSERT INTO rekap (id, bulan, tahun, saldo_sebelumnya, pemasukan, pengeluaran, sisa_saldo, keterangan, is_kunci_sinkron) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO UPDATE SET bulan = EXCLUDED.bulan, tahun = EXCLUDED.tahun, saldo_sebelumnya = EXCLUDED.saldo_sebelumnya, pemasukan = EXCLUDED.pemasukan, pengeluaran = EXCLUDED.pengeluaran, sisa_saldo = EXCLUDED.sisa_saldo, keterangan = EXCLUDED.keterangan, is_kunci_sinkron = EXCLUDED.is_kunci_sinkron",
+        [
+          savedRekap.id,
+          savedRekap.bulan,
+          savedRekap.tahun,
+          savedRekap.saldo_sebelumnya,
+          savedRekap.pemasukan,
+          savedRekap.pengeluaran,
+          savedRekap.sisa_saldo,
+          savedRekap.keterangan,
+          savedRekap.is_kunci_sinkron,
+        ],
+      ),
     );
   }
 

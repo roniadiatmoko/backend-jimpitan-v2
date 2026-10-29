@@ -49,6 +49,7 @@ const {
   kirimDatabaseTelegram,
   kirimRekapBulananJikaAkhirBulan,
 } = require("./telegram");
+const { wakeLayerbase } = require("./src/utils/postgresMirror");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -61,6 +62,7 @@ app.use(bodyParser.json());
 
 app.get("/", (req, res) => {
   console.log(">>> Menerima permintaan. Server aktif.");
+  void wakeLayerbase();
   res.send("Halo dari server jimpitan Replit! Server berjalan dengan baik.");
 });
 

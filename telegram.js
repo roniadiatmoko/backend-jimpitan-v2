@@ -8,6 +8,7 @@ const { ambilLaporanHarian, ambilJimpitanPerBulan, ambilRapelBulanan, ambilPenge
 const { getPresensiRondaByTanggal } = require("./src/features/presensi-ronda/model");
 const { getPeriodeSebelumnya, getRekapByPeriode } = require("./src/features/rekap/model");
 const { buildLaporanHarianText } = require("./src/utils/laporanHarianText");
+const { sendTelegramMessage } = require("./src/utils/telegramSender");
 
 const TELEGRAM_API = "https://api.telegram.org";
 const DB_PATH = path.join(__dirname, "db.sqlite");
@@ -17,21 +18,7 @@ function formatRupiah(nominal) {
 }
 
 async function kirimPesanTelegram(text) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.ID_TELEGRAM;
-  if (!token || !chatId) {
-    throw new Error("TELEGRAM_BOT_TOKEN / ID_TELEGRAM belum diset.");
-  }
-
-  const res = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" }),
-  });
-  const json = await res.json();
-  if (!json.ok) {
-    throw new Error(`Telegram sendMessage error: ${json.description}`);
-  }
+  await sendTelegramMessage(text, { parseMode: "Markdown" });
 }
 
 async function kirimDokumenTelegram(buffer, filename, caption) {

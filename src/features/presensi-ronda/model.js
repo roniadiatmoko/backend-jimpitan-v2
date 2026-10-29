@@ -1,4 +1,5 @@
 const { db } = require("../../../db");
+const { enqueueMirror, withTransaction } = require("../../utils/postgresMirror");
 
 function getPresensiRondaByTanggal(tanggal) {
   return new Promise((resolve, reject) => {
@@ -36,10 +37,37 @@ function savePresensiRonda(tanggal, homes) {
 
       stmt.finalize((err) => {
         if (err) return reject(err);
-        resolve({
-          tanggal: tanggalStr,
-          homes,
-        });
+        db.all(
+          "SELECT id, tanggal, nomor_rumah, nama_penghuni, waktu_input FROM presensi_ronda WHERE tanggal = ? ORDER BY id",
+          [tanggalStr],
+          (readError, rows) => {
+            if (readError) return reject(readError);
+            enqueueMirror(`presensi ronda ${tanggalStr}`, (pool) =>
+              withTransaction(pool, async (client) => {
+                await client.query(
+                  "DELETE FROM presensi_ronda WHERE tanggal = $1",
+                  [tanggalStr],
+                );
+                for (const row of rows) {
+                  await client.query(
+                    "INSERT INTO presensi_ronda (id, tanggal, nomor_rumah, nama_penghuni, waktu_input) VALUES ($1, $2, $3, $4, $5)",
+                    [
+                      row.id,
+                      row.tanggal,
+                      row.nomor_rumah,
+                      row.nama_penghuni,
+                      row.waktu_input,
+                    ],
+                  );
+                }
+              }),
+            );
+            resolve({
+              tanggal: tanggalStr,
+              homes,
+            });
+          },
+        );
       });
     });
   });
@@ -49,7 +77,12 @@ function deletePersonilById(id) {
   return new Promise((resolve, reject) => {
     db.run("DELETE FROM presensi_ronda WHERE id = ?", [id], (err) => {
       if (err) reject(err);
-      else resolve();
+      else {
+        enqueueMirror(`hapus presensi ronda ${id}`, (pool) =>
+          pool.query("DELETE FROM presensi_ronda WHERE id = $1", [id]),
+        );
+        resolve();
+      }
     });
   });
 }
