@@ -1,6 +1,9 @@
 // telegram.js — kanal backup Telegram untuk laporan harian + rekap akhir bulan
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
+const zlib = require("zlib");
+const sqlite3 = require("sqlite3").verbose();
 const { lastDayOfMonth, format, parseISO } = require("date-fns");
 const { id: localeId } = require("date-fns/locale");
 
@@ -54,11 +57,20 @@ async function kirimLaporanTelegram(tanggal) {
   }
   laporanData.laporan.sort((a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah));
 
+  let saldoInfo = null;
+  try {
+    const { getSaldoTerkini } = require("./src/features/rekap/model");
+    saldoInfo = await getSaldoTerkini();
+  } catch (e) {
+    console.warn("Gagal mengambil saldo terkini untuk laporan Telegram:", e.message);
+  }
+
   const laporanText = buildLaporanHarianText(
     tanggal,
     laporanData,
     presensiRonda,
     "Informasi: ini adalah backup laporan otomatis dari aplikasi jimpitan GBK Tempel 2",
+    saldoInfo,
   );
 
   await kirimPesanTelegram(laporanText);
@@ -147,6 +159,78 @@ async function kirimRekapBulananJikaAkhirBulan(tanggal) {
   await kirimDatabaseTelegram(bulan);
 }
 
+
+/**
+ * Membuat snapshot database SQLite yang aman menggunakan SQLite VACUUM INTO
+ * Dilanjutkan dengan kompresi GZIP untuk menghemat ukuran & kuota kirim
+ */
+async function createSafeDatabaseSnapshot() {
+  const tempBackup = path
+    .join(os.tmpdir(), `backup_temp_${Date.now()}.sqlite`)
+    .replace(/\\/g, "/");
+  const db = new sqlite3.Database(DB_PATH);
+
+  try {
+    await new Promise((resolve, reject) => {
+      db.run(`VACUUM INTO '${tempBackup}'`, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    const rawBuffer = fs.readFileSync(tempBackup);
+    const gzBuffer = zlib.gzipSync(rawBuffer);
+
+    return {
+      gzBuffer,
+      rawSize: rawBuffer.length,
+      gzSize: gzBuffer.length,
+    };
+  } finally {
+    db.close();
+    if (fs.existsSync(tempBackup)) {
+      try {
+        fs.unlinkSync(tempBackup);
+      } catch (_) {}
+    }
+  }
+}
+
+/**
+ * Kirim file backup database (.sqlite.gz) ke Telegram setiap selesai ronda harian
+ * atau saat admin meminta backup manual
+ */
+async function kirimBackupDatabaseTelegram(tanggal) {
+  const tglStr = tanggal || format(new Date(), "yyyy-MM-dd");
+  const { gzBuffer, rawSize, gzSize } = await createSafeDatabaseSnapshot();
+
+  const filename = `jimpitan_backup_${tglStr}.sqlite.gz`;
+  const rawKB = (rawSize / 1024).toFixed(0);
+  const gzKB = (gzSize / 1024).toFixed(0);
+  const timeStr = format(new Date(), "dd-MM-yyyy HH:mm:ss");
+
+  const caption =
+    `📦 *Backup Database Harian (Off-Site Telegram)*\n` +
+    `------------------------------------\n` +
+    `📅 *Tanggal Ronda:* ${tglStr}\n` +
+    `⏰ *Waktu Backup:* ${timeStr}\n` +
+    `💾 *Ukuran File:* ${gzKB} KB (Asli: ${rawKB} KB, GZIP)\n` +
+    `🔒 *Snapshot:* SQLite Online VACUUM (Anti-Corrupt)\n` +
+    `------------------------------------\n` +
+    `_Otomatis terkirim setelah petugas ronda menginput data jimpitan harian._`;
+
+  await kirimDokumenTelegram(gzBuffer, filename, caption);
+  console.log(`>>> Backup database (${filename}) berhasil dikirim ke Telegram.`);
+  return {
+    status: "OK",
+    message: `Backup database (${filename}) berhasil dikirim ke Telegram.`,
+    filename,
+    raw_size_bytes: rawSize,
+    gz_size_bytes: gzSize,
+    sent_at: new Date().toISOString(),
+  };
+}
+
 module.exports = {
   kirimPesanTelegram,
   kirimDokumenTelegram,
@@ -154,4 +238,6 @@ module.exports = {
   kirimRekapTelegram,
   kirimDatabaseTelegram,
   kirimRekapBulananJikaAkhirBulan,
+  kirimBackupDatabaseTelegram,
+  createSafeDatabaseSnapshot,
 };

@@ -9,7 +9,7 @@ const hariList = [
 ];
 
 // Bangun teks laporan jimpitan harian, dipakai oleh kanal WhatsApp maupun Telegram
-function buildLaporanHarianText(tanggal, laporanData, presensiRonda, footer) {
+function buildLaporanHarianText(tanggal, laporanData, presensiRonda, footer, saldoInfo) {
   const namaHari = hariList[new Date(tanggal).getDay()];
 
   let personilRonda = "Penanggung Jawab Ronda:\n";
@@ -21,10 +21,13 @@ function buildLaporanHarianText(tanggal, laporanData, presensiRonda, footer) {
   laporanText += `Tanggal: ${namaHari}, ${tanggal}\n\n`;
   laporanText += `${personilRonda}\n`;
   laporanText += `------------------------------------\n`;
-  laporanText += `💰 Total Terkumpul: Rp ${laporanData.totalUang.toLocaleString()}\n`;
+  laporanText += `💰 Total Terkumpul: Rp ${Number(laporanData.totalUang || 0).toLocaleString("id-ID")}\n`;
   laporanText += `✅ Terisi: ${laporanData.totalTerisi} rumah\n`;
   laporanText += `📦 Sudah Rapel: ${laporanData.totalRapel} rumah\n`;
   laporanText += `❌ Tidak Terisi: ${laporanData.totalTidakTerisi} rumah\n`;
+  if (saldoInfo && typeof saldoInfo.sisa_saldo === "number") {
+    laporanText += `🏦 Sisa Saldo Kas: Rp ${Number(saldoInfo.sisa_saldo).toLocaleString("id-ID")}\n`;
+  }
   laporanText += `------------------------------------\n\n`;
   laporanText += `*Detail Jimpitan Harian:*\n`;
   laporanData.laporan.forEach((item) => {

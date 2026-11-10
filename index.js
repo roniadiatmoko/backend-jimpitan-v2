@@ -23,8 +23,10 @@ const {
   ambilTanggalJimpitanKosong,
   ambilTanggalRapelTerisi,
   ambilPengeluaran,
+  ambilStatusJimpitanRumahPerBulan,
   simpanPengeluaran,
   hapusPengeluaran,
+  updatePengeluaran,
   simpanTanggalPemutihan,
   ambilTanggalPemutihan,
   hapusTanggalPemutihan,
@@ -42,12 +44,16 @@ const {
   kirimPesanWhatsApp,
   getLatestQr,
   onBotReady,
+  getBotStatus,
+  logoutBot,
+  restartBot,
 } = require("./bailey"); // pastikan nama file sesuai
 
 const {
   kirimLaporanTelegram,
   kirimDatabaseTelegram,
   kirimRekapBulananJikaAkhirBulan,
+  kirimBackupDatabaseTelegram,
 } = require("./telegram");
 const { wakeLayerbase } = require("./src/utils/postgresMirror");
 
@@ -79,6 +85,24 @@ app.get("/api/jimpitan", async (req, res) => {
     res.json({ status: "OK", data });
   } catch (err) {
     console.error("Error saat mengambil data jimpitan:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+// Endpoint riwayat status isi/tidak rumah per bulan (hanya tanggal yang sudah diisikan petugas ronda)
+app.get("/api/jimpitan/status-rumah/:nomor_rumah/:bulan", async (req, res) => {
+  try {
+    const { nomor_rumah, bulan } = req.params;
+    const riwayat = await ambilStatusJimpitanRumahPerBulan(nomor_rumah, bulan);
+    res.json({
+      status: "OK",
+      nomor_rumah,
+      bulan,
+      total_tanggal: riwayat.length,
+      riwayat,
+    });
+  } catch (err) {
+    console.error("Error saat mengambil status jimpitan per rumah:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
   }
 });
@@ -149,6 +173,11 @@ app.post("/api/jimpitan", async (req, res) => {
     // Backup: selalu kirim laporan yang sama ke Telegram, independen dari status bot WhatsApp
     kirimLaporanTelegram(tanggal).catch((err) =>
       console.error(">>> Gagal kirim backup laporan ke Telegram:", err),
+    );
+
+    // Backup fisik database (.sqlite.gz) ke Telegram setiap kali petugas ronda selesai input
+    kirimBackupDatabaseTelegram(tanggal).catch((err) =>
+      console.error(">>> Gagal kirim backup database ke Telegram:", err),
     );
 
     // Jika tanggal adalah hari terakhir bulan ini, kirim rekap bulanan + export DB ke Telegram
@@ -284,6 +313,168 @@ app.post("/api/kirim-whatsapp", async (req, res) => {
   }
 });
 
+
+// ==== WhatsApp Status & Management ====
+app.get("/api/whatsapp/status", async (req, res) => {
+  try {
+    const autoStart = req.query.auto_start === "true";
+    let status = getBotStatus();
+    if (!status.connected && !status.starting && autoStart) {
+      startBot();
+      await new Promise((r) => setTimeout(r, 1500));
+      status = getBotStatus();
+    }
+    const qrUrl = status.qr
+      ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(status.qr)}`
+      : null;
+    res.json({
+      status: "OK",
+      data: {
+        ...status,
+        qr_url: qrUrl,
+      },
+    });
+  } catch (err) {
+    console.error("Error in /api/whatsapp/status:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.post("/api/whatsapp/start", async (req, res) => {
+  try {
+    await restartBot();
+    await new Promise((r) => setTimeout(r, 1500));
+    const status = getBotStatus();
+    const qrUrl = status.qr
+      ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(status.qr)}`
+      : null;
+    res.json({
+      status: "OK",
+      message: "WhatsApp bot dimulai.",
+      data: { ...status, qr_url: qrUrl },
+    });
+  } catch (err) {
+    console.error("Error in /api/whatsapp/start:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.post("/api/whatsapp/logout", async (req, res) => {
+  try {
+    await logoutBot();
+    res.json({ status: "OK", message: "Sesi WhatsApp berhasil dikeluarkan (logout)." });
+  } catch (err) {
+    console.error("Error in /api/whatsapp/logout:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.post("/api/whatsapp/test", async (req, res) => {
+  try {
+    const status = getBotStatus();
+    if (!status.connected) {
+      return res.status(400).json({
+        status: "ERROR",
+        message: "WhatsApp belum terhubung. Silakan scan QR terlebih dahulu.",
+      });
+    }
+    const { target_phone, message } = req.body || {};
+    const textToSend = message || `Halo! Ini adalah pesan tes dari Aplikasi Jimpitan GBK Tempel 2 pada ${new Date().toLocaleString("id-ID")}.`;
+    
+    if (target_phone) {
+      await kirimPesanWhatsApp(textToSend, target_phone);
+    } else {
+      await kirimTesWhatsApp(textToSend);
+    }
+    res.json({ status: "OK", message: "Pesan tes berhasil dikirim!" });
+  } catch (err) {
+    console.error("Error in /api/whatsapp/test:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+
+app.post("/api/whatsapp/chat-test", async (req, res) => {
+  try {
+    const { message, sender } = req.body || {};
+    const { prosesPesanDenganAI } = require("./src/services/aiService");
+    const reply = await prosesPesanDenganAI(message || "Halo", sender || "628123456789@s.whatsapp.net");
+    res.json({ status: "OK", reply });
+  } catch (err) {
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+// ==== Cloud Database Sync (PostgreSQL <-> Local SQLite) ====
+const {
+  getPreviewStatus,
+  executeFullPull,
+  executeFullPush,
+} = require("./src/services/cloudSyncService");
+
+app.get("/api/database/sync-preview", async (req, res) => {
+  try {
+    const data = await getPreviewStatus();
+    res.json({ status: "OK", data });
+  } catch (err) {
+    console.error("Error in /api/database/sync-preview:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.post("/api/database/push-to-cloud", async (req, res) => {
+  try {
+    const result = await executeFullPush();
+    res.json(result);
+  } catch (err) {
+    console.error("Error in /api/database/push-to-cloud:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.post("/api/database/pull-from-cloud", async (req, res) => {
+  try {
+    const force = req.body?.force === true;
+    const result = await executeFullPull(force);
+    res.json(result);
+  } catch (err) {
+    console.error("Error in /api/database/pull-from-cloud:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.get("/api/database/mode", (req, res) => {
+  try {
+    const { getAppMode } = require("./src/services/cloudSyncService");
+    res.json({ status: "OK", data: getAppMode() });
+  } catch (err) {
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.post("/api/database/switch-mode", async (req, res) => {
+  try {
+    const { switchAppMode } = require("./src/services/cloudSyncService");
+    const { target_mode, pull_first } = req.body || {};
+    const result = await switchAppMode(target_mode, pull_first !== false);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+
+
+app.post("/api/database/backup-telegram", async (req, res) => {
+  try {
+    const result = await kirimBackupDatabaseTelegram();
+    res.json(result);
+  } catch (err) {
+    console.error("Error in /api/database/backup-telegram:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
 // --- Endpoint untuk mengambil laporan harian berdasarkan tanggal ---
 app.get("/api/laporan/:tanggal", async (req, res) => {
   try {
@@ -392,6 +583,38 @@ app.post("/api/rapel", async (req, res) => {
   }
 });
 
+// Endpoint hitung kebutuhan nominal rapel untuk melunaskan bulan terpilih
+app.get("/api/rapel/kebutuhan-lunas/:nomor_rumah/:bulan", async (req, res) => {
+  try {
+    const { nomor_rumah, bulan } = req.params;
+    const tanggalJimpitanKosong = await ambilTanggalJimpitanKosong(nomor_rumah, bulan);
+    const tanggalRapelTerisi = await ambilTanggalRapelTerisi(nomor_rumah, bulan);
+    const tanggalPemutihanRows = await ambilTanggalPemutihan(bulan);
+    const tanggalPemutihan = tanggalPemutihanRows.map((row) => row.tanggal);
+
+    const hariUntukDirapel = tanggalJimpitanKosong.filter(
+      (tanggal) =>
+        !tanggalRapelTerisi.includes(tanggal) &&
+        !tanggalPemutihan.includes(tanggal),
+    );
+
+    const sisaHari = hariUntukDirapel.length;
+    const nominalLunas = sisaHari * 500;
+
+    res.json({
+      status: "OK",
+      nomor_rumah,
+      bulan,
+      sisa_hari: sisaHari,
+      nominal_lunas: nominalLunas,
+      tanggal_belum_lunas: hariUntukDirapel,
+    });
+  } catch (err) {
+    console.error("Error saat menghitung kebutuhan lunas rapel:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
 // Endpoint baru untuk mengambil status rapel harian
 app.get("/api/rapel-harian/:tanggal", async (req, res) => {
   try {
@@ -477,9 +700,9 @@ app.get("/api/ref-warga/:nomor", async (req, res) => {
 
 app.post("/api/ref-warga", async (req, res) => {
   try {
-    const { nama, sudah_menghuni, tanggal_huni, no_hp } = req.body;
-    const nomor = await simpanRefWarga(nama, sudah_menghuni, tanggal_huni, no_hp);
-    res.json({ status: "OK", nomor });
+    const { nomor, nama, sudah_menghuni, tanggal_huni, no_hp } = req.body;
+    const resultNomor = await simpanRefWarga(nomor, nama, sudah_menghuni, tanggal_huni, no_hp);
+    res.json({ status: "OK", nomor: resultNomor });
   } catch (err) {
     console.error("Error saat menyimpan ref_warga:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
@@ -559,6 +782,29 @@ app.delete("/api/tanggal-pemutihan/:id", async (req, res) => {
     res.json({ status: "OK" });
   } catch (err) {
     console.error("Error saat menghapus tanggal pemutihan:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+// Mengupdate pengeluaran berdasarkan id
+app.put("/api/pengeluaran/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { tanggal, nominal, penanggung_jawab, keterangan, bukti_foto } = req.body;
+    const updated = await updatePengeluaran(
+      id,
+      tanggal,
+      nominal,
+      penanggung_jawab,
+      keterangan,
+      bukti_foto
+    );
+    if (!updated) {
+      return res.status(404).json({ status: "NOT_FOUND", message: "Pengeluaran tidak ditemukan." });
+    }
+    res.json({ status: "OK", message: "Pengeluaran berhasil diperbarui." });
+  } catch (err) {
+    console.error("Error saat memperbarui pengeluaran:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
   }
 });

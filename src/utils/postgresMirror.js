@@ -21,7 +21,8 @@ let wakePromise;
 
 function isConfigured() {
   return Boolean(
-    process.env.PGHOST &&
+    process.env.ENABLE_PG_MIRROR === "true" &&
+      process.env.PGHOST &&
       process.env.PGUSER &&
       process.env.PGPASSWORD &&
       process.env.PGDATABASE,

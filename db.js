@@ -323,7 +323,7 @@ function ambilRapelHarian(tanggal) {
 function ambilRapelBulanan(bulan) {
   return new Promise((resolve, reject) => {
     db.all(
-      "SELECT nomor_rumah, count(1) as jumlah_rapel, count(1) * 500 nominal FROM rapel WHERE SUBSTR(tanggal, 1, 7) = ? GROUP BY nomor_rumah ORDER BY nomor_rumah",
+      "SELECT r.nomor_rumah, count(1) as jumlah_rapel, count(1) * 500 as nominal, w.nama FROM rapel r LEFT JOIN ref_warga w ON CAST(r.nomor_rumah AS INTEGER) = w.nomor WHERE SUBSTR(r.tanggal, 1, 7) = ? GROUP BY r.nomor_rumah ORDER BY CAST(r.nomor_rumah AS INTEGER) ASC",
       [bulan],
       (err, rows) => {
         if (err) reject(err);
@@ -468,6 +468,28 @@ function simpanPengeluaran(tanggal, nominal, penanggung_jawab, keterangan, bukti
   })
 }
 
+function updatePengeluaran(id, tanggal, nominal, penanggung_jawab, keterangan, bukti_foto) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      "UPDATE pengeluaran SET tanggal = ?, nominal = ?, penanggung_jawab = ?, keterangan = ?, bukti_foto = ? WHERE id = ?",
+      [tanggal, nominal, penanggung_jawab, keterangan, bukti_foto, id],
+      function (err) {
+        if (err) return reject(err);
+        const changes = this.changes;
+        if (changes > 0) {
+          enqueueMirror("ubah pengeluaran " + id, (pool) =>
+            pool.query(
+              "UPDATE pengeluaran SET tanggal = $1, nominal = $2, penanggung_jawab = $3, keterangan = $4, bukti_foto = $5 WHERE id = $6",
+              [tanggal, nominal, penanggung_jawab, keterangan, bukti_foto, id],
+            ),
+          );
+        }
+        resolve(changes);
+      },
+    );
+  });
+}
+
 function hapusPengeluaran(id) {
   return new Promise((resolve, reject) => {
     db.run("DELETE FROM pengeluaran WHERE id = ?", [id], function (err) {
@@ -560,24 +582,61 @@ function hapusTanggalPemutihan(id) {
   });
 }
 
-function simpanRefWarga(nama, sudah_menghuni, tanggal_huni, no_hp) {
+function simpanRefWarga(nomor, nama, sudah_menghuni, tanggal_huni, no_hp) {
+  let targetNomor = nomor;
+  let targetNama = nama;
+  let targetSudahMenghuni = sudah_menghuni;
+  let targetTanggalHuni = tanggal_huni;
+  let targetNoHp = no_hp;
+
+  if (typeof targetNomor === "string" && isNaN(Number(targetNomor))) {
+    targetNama = nomor;
+    targetSudahMenghuni = nama;
+    targetTanggalHuni = sudah_menghuni;
+    targetNoHp = tanggal_huni;
+    targetNomor = null;
+  }
+
   return new Promise((resolve, reject) => {
-    const createdAt = new Date().toISOString();
-    db.run(
-      "INSERT INTO ref_warga (nama, sudah_menghuni, tanggal_huni, no_hp) VALUES (?, ?, ?, ?)",
-      [nama, sudah_menghuni, tanggal_huni, no_hp],
-      function (err) {
-        if (err) return reject(err);
-        const nomor = this.lastID;
-        enqueueMirror(`warga ${nomor}`, (pool) =>
-          pool.query(
-            "INSERT INTO ref_warga (nomor, nama, sudah_menghuni, tanggal_huni, no_hp) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (nomor) DO UPDATE SET nama = EXCLUDED.nama, sudah_menghuni = EXCLUDED.sudah_menghuni, tanggal_huni = EXCLUDED.tanggal_huni, no_hp = EXCLUDED.no_hp",
-            [nomor, nama, sudah_menghuni, tanggal_huni, no_hp],
-          ),
-        );
-        resolve(nomor || null);
-      },
-    );
+    if (targetNomor != null && targetNomor !== "") {
+      const numNomor = Number(targetNomor);
+      db.run(
+        `INSERT INTO ref_warga (nomor, nama, sudah_menghuni, tanggal_huni, no_hp)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (nomor) DO UPDATE SET
+           nama = EXCLUDED.nama,
+           sudah_menghuni = EXCLUDED.sudah_menghuni,
+           tanggal_huni = EXCLUDED.tanggal_huni,
+           no_hp = EXCLUDED.no_hp`,
+        [numNomor, targetNama, targetSudahMenghuni, targetTanggalHuni, targetNoHp],
+        function (err) {
+          if (err) return reject(err);
+          enqueueMirror(`warga ${numNomor}`, (pool) =>
+            pool.query(
+              "INSERT INTO ref_warga (nomor, nama, sudah_menghuni, tanggal_huni, no_hp) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (nomor) DO UPDATE SET nama = EXCLUDED.nama, sudah_menghuni = EXCLUDED.sudah_menghuni, tanggal_huni = EXCLUDED.tanggal_huni, no_hp = EXCLUDED.no_hp",
+              [numNomor, targetNama, targetSudahMenghuni, targetTanggalHuni, targetNoHp],
+            ),
+          );
+          resolve(numNomor);
+        },
+      );
+    } else {
+      db.run(
+        "INSERT INTO ref_warga (nama, sudah_menghuni, tanggal_huni, no_hp) VALUES (?, ?, ?, ?)",
+        [targetNama, targetSudahMenghuni, targetTanggalHuni, targetNoHp],
+        function (err) {
+          if (err) return reject(err);
+          const newNomor = this.lastID;
+          enqueueMirror(`warga ${newNomor}`, (pool) =>
+            pool.query(
+              "INSERT INTO ref_warga (nomor, nama, sudah_menghuni, tanggal_huni, no_hp) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (nomor) DO UPDATE SET nama = EXCLUDED.nama, sudah_menghuni = EXCLUDED.sudah_menghuni, tanggal_huni = EXCLUDED.tanggal_huni, no_hp = EXCLUDED.no_hp",
+              [newNomor, targetNama, targetSudahMenghuni, targetTanggalHuni, targetNoHp],
+            ),
+          );
+          resolve(newNomor || null);
+        },
+      );
+    }
   });
 }
 
@@ -608,7 +667,7 @@ function ambilRefWarga(nomor) {
         else resolve(row);
       });
     } else {
-      db.all("SELECT * FROM ref_warga ORDER BY nomor ASC", (err, rows) => {
+      db.all("SELECT * FROM ref_warga ORDER BY CAST(nomor AS INTEGER) ASC", (err, rows) => {
         if (err) reject(err);
         else resolve(rows);
       });
@@ -628,6 +687,19 @@ function hapusRefWarga(nomor) {
   });
 }
 
+function ambilStatusJimpitanRumahPerBulan(nomor_rumah, bulan) {
+  return new Promise((resolve, reject) => {
+    db.all(
+      "SELECT j.tanggal, j.nomor_rumah, j.nama_pengisi, j.jumlah, j.diambil_oleh, (SELECT count(1) FROM rapel r WHERE r.nomor_rumah = j.nomor_rumah AND r.tanggal = j.tanggal) as is_rapel, w.nama as nama_warga FROM jimpitan j LEFT JOIN ref_warga w ON CAST(j.nomor_rumah AS INTEGER) = w.nomor WHERE j.nomor_rumah = ? AND SUBSTR(j.tanggal, 1, 7) = ? ORDER BY j.tanggal ASC",
+      [String(nomor_rumah), String(bulan)],
+      (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      },
+    );
+  });
+}
+
 module.exports = {
   db,
   ambilSemuaData,
@@ -640,8 +712,10 @@ module.exports = {
   ambilTanggalJimpitanKosong,
   ambilTanggalRapelTerisi,
   ambilPengeluaran,
+  ambilStatusJimpitanRumahPerBulan,
   simpanPengeluaran,
   hapusPengeluaran,
+  updatePengeluaran,
   simpanTanggalPemutihan,
   ambilTanggalPemutihan,
   hapusTanggalPemutihan,

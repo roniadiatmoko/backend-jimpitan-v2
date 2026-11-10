@@ -137,3 +137,10 @@ dist
 
 #db files
 db.sqlite
+
+cloudflared.exe
+
+*.db
+*.sqlite
+*.sqlite3
+*.log

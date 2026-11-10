@@ -1,4 +1,4 @@
-const { all } = require("../../db");
+const { all, get } = require("../../db");
 
 // period: 'YYYY-MM'
 async function getHitungKekurangan(period) {
@@ -12,25 +12,27 @@ async function getHitungKekurangan(period) {
   const nextMonthStr = String(nextMonth).padStart(2, "0");
   const nextMonthStart = `${nextMonthYear}-${nextMonthStr}-01`;
 
+  // Dapatkan batas akhir tanggal aktif transaksi / hari ini
+  // Tanggal di masa depan (yang belum tiba) tidak dihitung sebagai kekurangan
+  const maxRow = await get("SELECT MAX(tanggal) as max_tgl FROM jimpitan WHERE jumlah > 0");
+  const todayStr = new Date().toISOString().substring(0, 10);
+  const maxDate = maxRow?.max_tgl && maxRow.max_tgl > todayStr ? maxRow.max_tgl : todayStr;
+
   const sql = `
   WITH RECURSIVE all_days(d) AS (
-    SELECT ?                             -- :start
+    SELECT ? WHERE ? <= ?
     UNION ALL
     SELECT date(d, '+1 day') FROM all_days
-    WHERE d < date(?, '-1 day')          -- :nextMonthStart
+    WHERE date(d, '+1 day') < ? AND date(d, '+1 day') <= ?
   ),
   pemutihan AS (
     SELECT tanggal FROM tanggal_pemutihan
     WHERE tanggal >= ? AND tanggal < ?
   ),
-  rumah AS (
-    SELECT DISTINCT nomor_rumah FROM (
-      SELECT nomor_rumah FROM jimpitan
-      WHERE tanggal >= ? AND tanggal < ?
-      UNION
-      SELECT nomor_rumah FROM rapel
-      WHERE tanggal >= ? AND tanggal < ?
-    )
+  warga AS (
+    SELECT nomor as nomor_rumah, tanggal_huni, date(tanggal_huni, 'start of month') as awal_huni
+    FROM ref_warga
+    WHERE sudah_menghuni = 1 AND tanggal_huni IS NOT NULL
   ),
   terisi AS (
     SELECT nomor_rumah, tanggal
@@ -42,8 +44,9 @@ async function getHitungKekurangan(period) {
     WHERE tanggal >= ? AND tanggal < ?
   ),
   kalender AS (
-    SELECT r.nomor_rumah, a.d AS tanggal
-    FROM rumah r CROSS JOIN all_days a
+    SELECT w.nomor_rumah, a.d AS tanggal
+    FROM warga w
+    JOIN all_days a ON a.d >= w.awal_huni
     WHERE a.d NOT IN (SELECT tanggal FROM pemutihan)
   )
   SELECT
@@ -59,60 +62,55 @@ async function getHitungKekurangan(period) {
   `;
 
   const params = [
-    start,               // 1  all_days: start
-    nextMonthStart,      // 2  all_days: nextMonthStart
-    start,               // 3  pemutihan: start
-    nextMonthStart,      // 4  pemutihan: nextMonthStart
-    start,               // 5  rumah (jimpitan)
-    nextMonthStart,      // 6
-    start,               // 7  rumah (rapel)
-    nextMonthStart,      // 8
-    start,               // 9  terisi (jimpitan)
-    nextMonthStart,      // 10
-    start,               // 11  terisi (rapel)
-    nextMonthStart       // 12
+    start,
+    start,
+    maxDate,
+    nextMonthStart,
+    maxDate,
+    start,
+    nextMonthStart,
+    start,
+    nextMonthStart,
+    start,
+    nextMonthStart,
   ];
 
   const rows = await all(sql, params);
 
   // mapping output biar rapi
-  return rows.map(r => ({
-    nomor_rumah: r.nomor_rumah,
+  return rows.map((r) => ({
+    nomor_rumah: String(r.nomor_rumah),
     kekurangan_hari: Number(r.kekurangan_hari) || 0,
-    tanggal_kurang: r.tanggal_kurang_csv ? r.tanggal_kurang_csv.split(",") : []
+    tanggal_kurang: r.tanggal_kurang_csv ? r.tanggal_kurang_csv.split(",") : [],
   }));
 }
-
-module.exports = {
-  getHitungKekurangan,
-};
 
 // year: 'YYYY' or number
 async function getHitungKekuranganTahun(year) {
   const yStr = String(year);
   const start = `${yStr}-01-01`;
   const nextYearStart = `${Number(yStr) + 1}-01-01`;
-  const end = `${yStr}-12-31`;
+
+  // Dapatkan batas akhir tanggal aktif transaksi / hari ini
+  const maxRow = await get("SELECT MAX(tanggal) as max_tgl FROM jimpitan WHERE jumlah > 0");
+  const todayStr = new Date().toISOString().substring(0, 10);
+  const maxDate = maxRow?.max_tgl && maxRow.max_tgl > todayStr ? maxRow.max_tgl : todayStr;
 
   const sql = `
   WITH RECURSIVE all_days(d) AS (
-    SELECT ?                             -- :start
+    SELECT ? WHERE ? <= ?
     UNION ALL
     SELECT date(d, '+1 day') FROM all_days
-    WHERE d < date(?, '-1 day')          -- :nextYearStart
+    WHERE date(d, '+1 day') < ? AND date(d, '+1 day') <= ?
   ),
   pemutihan AS (
     SELECT tanggal FROM tanggal_pemutihan
     WHERE tanggal >= ? AND tanggal < ?
   ),
-  rumah AS (
-    SELECT DISTINCT nomor_rumah FROM (
-      SELECT nomor_rumah FROM jimpitan
-      WHERE tanggal >= ? AND tanggal < ?
-      UNION
-      SELECT nomor_rumah FROM rapel
-      WHERE tanggal >= ? AND tanggal < ?
-    )
+  warga AS (
+    SELECT nomor as nomor_rumah, tanggal_huni, date(tanggal_huni, 'start of month') as awal_huni
+    FROM ref_warga
+    WHERE sudah_menghuni = 1 AND tanggal_huni IS NOT NULL
   ),
   terisi AS (
     SELECT nomor_rumah, tanggal
@@ -124,52 +122,51 @@ async function getHitungKekuranganTahun(year) {
     WHERE tanggal >= ? AND tanggal < ?
   ),
   kalender AS (
-    SELECT r.nomor_rumah, a.d AS tanggal
-    FROM rumah r CROSS JOIN all_days a
+    SELECT w.nomor_rumah, a.d AS tanggal
+    FROM warga w
+    JOIN all_days a ON a.d >= w.awal_huni
     WHERE a.d NOT IN (SELECT tanggal FROM pemutihan)
   )
   SELECT
-    k.nomor_rumah,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '01' THEN 1 ELSE 0 END) AS m01,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '02' THEN 1 ELSE 0 END) AS m02,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '03' THEN 1 ELSE 0 END) AS m03,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '04' THEN 1 ELSE 0 END) AS m04,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '05' THEN 1 ELSE 0 END) AS m05,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '06' THEN 1 ELSE 0 END) AS m06,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '07' THEN 1 ELSE 0 END) AS m07,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '08' THEN 1 ELSE 0 END) AS m08,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '09' THEN 1 ELSE 0 END) AS m09,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '10' THEN 1 ELSE 0 END) AS m10,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '11' THEN 1 ELSE 0 END) AS m11,
-    SUM(CASE WHEN t.tanggal IS NULL AND strftime('%m', k.tanggal) = '12' THEN 1 ELSE 0 END) AS m12,
-    SUM(CASE WHEN t.tanggal IS NULL THEN 1 ELSE 0 END) AS total
-  FROM kalender k
-  LEFT JOIN terisi t
-    ON t.nomor_rumah = k.nomor_rumah AND t.tanggal = k.tanggal
-  GROUP BY k.nomor_rumah
-  HAVING SUM(CASE WHEN t.tanggal IS NULL THEN 1 ELSE 0 END) > 0
-  ORDER BY CAST(k.nomor_rumah AS INTEGER) ASC;
+    rw.nomor AS nomor_rumah,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '01' THEN 1 ELSE 0 END), 0) AS m01,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '02' THEN 1 ELSE 0 END), 0) AS m02,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '03' THEN 1 ELSE 0 END), 0) AS m03,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '04' THEN 1 ELSE 0 END), 0) AS m04,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '05' THEN 1 ELSE 0 END), 0) AS m05,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '06' THEN 1 ELSE 0 END), 0) AS m06,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '07' THEN 1 ELSE 0 END), 0) AS m07,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '08' THEN 1 ELSE 0 END), 0) AS m08,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '09' THEN 1 ELSE 0 END), 0) AS m09,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '10' THEN 1 ELSE 0 END), 0) AS m10,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '11' THEN 1 ELSE 0 END), 0) AS m11,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL AND strftime('%m', k.tanggal) = '12' THEN 1 ELSE 0 END), 0) AS m12,
+    COALESCE(SUM(CASE WHEN k.tanggal IS NOT NULL AND t.tanggal IS NULL THEN 1 ELSE 0 END), 0) AS total
+  FROM ref_warga rw
+  LEFT JOIN kalender k ON k.nomor_rumah = rw.nomor
+  LEFT JOIN terisi t ON t.nomor_rumah = k.nomor_rumah AND t.tanggal = k.tanggal
+  GROUP BY rw.nomor
+  ORDER BY CAST(rw.nomor AS INTEGER) ASC;
   `;
 
   const params = [
-    start,           // all_days start
-    nextYearStart,   // all_days nextYearStart
-    start,           // pemutihan >= start
-    nextYearStart,   // pemutihan < nextYearStart
-    start,           // rumah jimpitan >= start
-    nextYearStart,   // rumah jimpitan < nextYearStart
-    start,           // rumah rapel >= start
-    nextYearStart,   // rumah rapel < nextYearStart
-    start,           // terisi jimpitan >= start
-    nextYearStart,   // terisi jimpitan < nextYearStart
-    start,           // terisi rapel >= start
-    nextYearStart    // terisi rapel < nextYearStart
+    start,
+    start,
+    maxDate,
+    nextYearStart,
+    maxDate,
+    start,
+    nextYearStart,
+    start,
+    nextYearStart,
+    start,
+    nextYearStart,
   ];
 
   const rows = await all(sql, params);
 
-  return rows.map(r => ({
-    nomor_rumah: r.nomor_rumah,
+  return rows.map((r) => ({
+    nomor_rumah: String(r.nomor_rumah),
     januari: Number(r.m01) || 0,
     februari: Number(r.m02) || 0,
     maret: Number(r.m03) || 0,
@@ -182,9 +179,11 @@ async function getHitungKekuranganTahun(year) {
     oktober: Number(r.m10) || 0,
     november: Number(r.m11) || 0,
     desember: Number(r.m12) || 0,
-    total: Number(r.total) || 0
+    total: Number(r.total) || 0,
   }));
 }
 
-// export tambahan
-module.exports.getHitungKekuranganTahun = getHitungKekuranganTahun;
+module.exports = {
+  getHitungKekurangan,
+  getHitungKekuranganTahun,
+};

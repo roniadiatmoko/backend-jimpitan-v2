@@ -1,4 +1,4 @@
-const { getRekapByPeriode, upsertRekap } = require("./model");
+const { getRekapByPeriode, upsertRekap, getSaldoTerkini } = require("./model");
 
 const BULAN_RE = /^\d{2}$/;
 const TAHUN_RE = /^\d{4}$/;
@@ -104,6 +104,21 @@ async function getRekapPeriode(req, res, next) {
 }
 
 module.exports = {
+  getSaldoTerkiniController,
   simpanRekap,
   getRekapPeriode,
 };
+
+async function getSaldoTerkiniController(req, res, next) {
+  try {
+    const { bulan } = req.query;
+    const data = await getSaldoTerkini(bulan);
+    return res.json({
+      success: true,
+      data,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
