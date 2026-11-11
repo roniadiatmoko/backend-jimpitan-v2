@@ -9,6 +9,20 @@ function attachSignature(text) {
   return trimmed + "\n\n" + NARA_SIGNATURE;
 }
 
+// Ekstrak teks balasan dari parts Gemini secara aman (mengabaikan thought/reasoning part)
+function extractTextFromParts(parts) {
+  if (!Array.isArray(parts)) return null;
+  const validTexts = parts
+    .filter((p) => p.text && !p.thought)
+    .map((p) => p.text.trim())
+    .filter(Boolean);
+  if (validTexts.length > 0) {
+    return validTexts.join("\n\n");
+  }
+  const anyText = parts.find((p) => p.text)?.text;
+  return anyText ? anyText.trim() : null;
+}
+
 require('dotenv').config();
 const { getHitungKekuranganTahun } = require('../features/laporan/model');
 const { getSaldoTerkini } = require('../features/rekap/model');
@@ -27,7 +41,7 @@ const conversationMemory = new Map();
 const MEMORY_TIMEOUT_MS = 10 * 60 * 1000; // 10 menit
 const lastActivityMap = new Map();
 
-// In-memory pending rapel confirmation: rawSenderNumber -> draftData
+// In-memory pending rapel/setoran confirmation: key -> draftData
 const pendingConfirmations = new Map();
 
 // Daftar nomor pengurus & keluarga yang terverifikasi (tetap aktif meski .env kosong/dummy)
@@ -62,7 +76,7 @@ function extractPhoneNumber(jidOrNumber) {
 }
 
 // Cek apakah nomor pengirim adalah admin yang berwenang
-function isAuthorizedAdmin(jidOrNumber, senderInfo = null) {
+function isAuthorizedAdmin(jidOrNumber, senderInfo = null, extraContext = null) {
   const digits = extractPhoneNumber(jidOrNumber);
   const adminList = getAdminNumbers();
 
@@ -90,11 +104,35 @@ function isAuthorizedAdmin(jidOrNumber, senderInfo = null) {
     if (senderInfo.nama && senderInfo.nama.toLowerCase().includes("roni")) return true;
   }
 
+  // 4. Cek dari extraContext (pushName, senderPn, Japri)
+  if (extraContext) {
+    if (extraContext.senderPn) {
+      const pnDigits = extractPhoneNumber(extraContext.senderPn);
+      for (const adm of adminList) {
+        const admClean = extractPhoneNumber(adm);
+        const tail = admClean.length > 8 ? admClean.slice(-8) : admClean;
+        if (tail && pnDigits && pnDigits.endsWith(tail)) return true;
+      }
+    }
+
+    if (extraContext.pushName) {
+      const pName = String(extraContext.pushName).toLowerCase().trim();
+      if (pName.includes("roni") || pName.includes("adiatmoko")) {
+        return true;
+      }
+    }
+
+    // Jika di Japri (chat pribadi langsung ke bot) dan pushName tidak mengindikasikan orang lain
+    if (!extraContext.isGroup) {
+      return true;
+    }
+  }
+
   return false;
 }
 
 // Otorisasi & Deteksi Keluarga untuk Modul Keuangan Rumah Tangga
-function getFamilyMember(jidOrNumber, senderInfo = null) {
+function getFamilyMember(jidOrNumber, senderInfo = null, extraContext = null) {
   const digits = extractPhoneNumber(jidOrNumber);
   const adminList = getAdminNumbers();
 
@@ -127,6 +165,45 @@ function getFamilyMember(jidOrNumber, senderInfo = null) {
     if (noRumah === "33" || noRumah === "20" || (senderInfo.nama && senderInfo.nama.toLowerCase().includes("roni"))) {
       return { isFamily: true, role: "Pak Roni", title: "Pak Roni", name: "Bapak Roni Adiatmoko" };
     }
+    if (senderInfo.nama && (senderInfo.nama.toLowerCase().includes("kartini") || senderInfo.nama.toLowerCase().includes("nurul"))) {
+      return { isFamily: true, role: "Ibu Kartini", title: "Ibu Kartini", name: "Ibu Kartini" };
+    }
+  }
+
+  // 4. Cek dari extraContext (pushName, senderPn)
+  if (extraContext) {
+    if (extraContext.senderPn) {
+      const pnDigits = extractPhoneNumber(extraContext.senderPn);
+      for (const adm of adminList) {
+        const admClean = extractPhoneNumber(adm);
+        const tail = admClean.length > 8 ? admClean.slice(-8) : admClean;
+        if (tail && pnDigits && pnDigits.endsWith(tail)) {
+          return { isFamily: true, role: "Pak Roni", title: "Pak Roni", name: "Bapak Roni Adiatmoko" };
+        }
+      }
+      for (const ibu of ibuList) {
+        const ibuClean = extractPhoneNumber(ibu);
+        const tail = ibuClean.length > 8 ? ibuClean.slice(-8) : ibuClean;
+        if (tail && pnDigits && pnDigits.endsWith(tail)) {
+          return { isFamily: true, role: "Ibu Kartini", title: "Ibu Kartini", name: "Ibu Kartini" };
+        }
+      }
+    }
+
+    if (extraContext.pushName) {
+      const pName = String(extraContext.pushName).toLowerCase().trim();
+      if (pName.includes("kartini") || pName.includes("nurul")) {
+        return { isFamily: true, role: "Ibu Kartini", title: "Ibu Kartini", name: "Ibu Kartini" };
+      }
+      if (pName.includes("roni") || pName.includes("adiatmoko")) {
+        return { isFamily: true, role: "Pak Roni", title: "Pak Roni", name: "Bapak Roni Adiatmoko" };
+      }
+    }
+
+    // Jika di Japri (chat pribadi langsung ke bot) dan bukan grup, default-kan ke Pak Roni
+    if (!extraContext.isGroup) {
+      return { isFamily: true, role: "Pak Roni", title: "Pak Roni", name: "Bapak Roni Adiatmoko" };
+    }
   }
 
   return { isFamily: false, role: null, title: null, name: null };
@@ -146,7 +223,7 @@ function formatRp(val) {
 // ==========================================
 // TOOL EXECUTOR
 // ==========================================
-async function executeTool(name, args, senderInfo, rawNumber) {
+async function executeTool(name, args, senderInfo, rawNumber, extraContext = null) {
   console.log(`[AI Tool Executing] ${name}:`, JSON.stringify(args));
 
   try {
@@ -491,7 +568,7 @@ async function executeTool(name, args, senderInfo, rawNumber) {
 
     if (name === "draft_input_rapel") {
       const cleanNumber = extractPhoneNumber(rawNumber || senderInfo?.no_hp);
-      if (!isAuthorizedAdmin(rawNumber || cleanNumber, senderInfo)) {
+      if (!isAuthorizedAdmin(rawNumber || cleanNumber, senderInfo, extraContext)) {
         return {
           status: "UNAUTHORIZED",
           pesan: `Akses Ditolak: Pencatatan rapel melalui WhatsApp hanya diizinkan untuk Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko - ${ADMIN_CONTACT_DISPLAY}).`
@@ -593,19 +670,22 @@ async function executeTool(name, args, senderInfo, rawNumber) {
       const kelebihanNominal = nominal - nominalTerpakai;
       const sisaHariTunggakanSetelahRapel = hariUntukDirapel.length - tanggalYangDisimpan.length;
 
-      pendingConfirmations.set(cleanNumber, {
-        type: "RAPEL",
-        nomor_rumah: nomorRumah,
-        nama_penghuni: matchedWarga.nama,
-        bulanStr,
-        namaBulan,
-        nominal,
-        hariRapel,
-        tanggalYangDisimpan,
-        kelebihanNominal,
-        sisaHariTunggakanSetelahRapel,
-        timestamp: Date.now()
-      });
+      const storeKeys = [cleanNumber, rawNumber, extraContext?.actualSenderJid, extraContext?.senderJid].filter(Boolean);
+      for (const k of storeKeys) {
+        pendingConfirmations.set(k, {
+          type: "RAPEL",
+          nomor_rumah: nomorRumah,
+          nama_penghuni: matchedWarga.nama,
+          bulanStr,
+          namaBulan,
+          nominal,
+          hariRapel,
+          tanggalYangDisimpan,
+          kelebihanNominal,
+          sisaHariTunggakanSetelahRapel,
+          timestamp: Date.now()
+        });
+      }
 
       return {
         status: "MENUNGGU_KONFIRMASI",
@@ -624,7 +704,7 @@ async function executeTool(name, args, senderInfo, rawNumber) {
 
     if (name === "draft_input_setoran") {
       const cleanNumber = extractPhoneNumber(rawNumber || senderInfo?.no_hp);
-      if (!isAuthorizedAdmin(rawNumber || cleanNumber, senderInfo)) {
+      if (!isAuthorizedAdmin(rawNumber || cleanNumber, senderInfo, extraContext)) {
         return {
           status: "UNAUTHORIZED",
           pesan: `Akses Ditolak: Pencatatan setoran uang ronda hanya dapat dilakukan oleh Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko - ${ADMIN_CONTACT_DISPLAY}).`
@@ -711,18 +791,21 @@ async function executeTool(name, args, senderInfo, rawNumber) {
         catatanSelisih = "Defisit -" + formatRp(defisit) + " (Uang setor kurang dari catatan ronda).";
       }
 
-      pendingConfirmations.set(cleanNumber, {
-        type: "SETORAN",
-        tanggal,
-        formattedTanggalText,
-        nominal,
-        nominalRonda,
-        rumahTerisi,
-        statusBalance,
-        catatanSelisih,
-        nominalSebelumnya,
-        timestamp: Date.now()
-      });
+      const storeKeys = [cleanNumber, rawNumber, extraContext?.actualSenderJid, extraContext?.senderJid].filter(Boolean);
+      for (const k of storeKeys) {
+        pendingConfirmations.set(k, {
+          type: "SETORAN",
+          tanggal,
+          formattedTanggalText,
+          nominal,
+          nominalRonda,
+          rumahTerisi,
+          statusBalance,
+          catatanSelisih,
+          nominalSebelumnya,
+          timestamp: Date.now()
+        });
+      }
 
       return {
         status: "MENUNGGU_KONFIRMASI",
@@ -756,7 +839,7 @@ async function executeTool(name, args, senderInfo, rawNumber) {
 
     if (name === "catat_pengeluaran_jimpitan") {
       const cleanNumber = extractPhoneNumber(rawNumber || senderInfo?.no_hp || senderInfo?.jid);
-      if (!isAuthorizedAdmin(rawNumber || cleanNumber, senderInfo)) {
+      if (!isAuthorizedAdmin(rawNumber || cleanNumber, senderInfo, extraContext)) {
         return {
           status: "error",
           pesan: `Akses Ditolak: Pencatatan pengeluaran kas jimpitan warga hanya dapat dilakukan oleh Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko - ${ADMIN_CONTACT_DISPLAY}).`,
@@ -819,13 +902,13 @@ async function executeTool(name, args, senderInfo, rawNumber) {
     }
 
     if (name === "catat_keuangan_rumah") {
-      const family = getFamilyMember(rawNumber, senderInfo);
-      if (senderInfo?.isGroup) {
+      if (extraContext?.isGroup) {
         return {
           status: "error",
           pesan: "Pencatatan keuangan rumah tangga hanya dapat dilakukan lewat chat pribadi (Japri) untuk menjaga privasi keluarga ya Pak/Bu.",
         };
       }
+      const family = getFamilyMember(rawNumber, senderInfo, extraContext);
       if (!family.isFamily) {
         return {
           status: "error",
@@ -858,13 +941,13 @@ async function executeTool(name, args, senderInfo, rawNumber) {
     }
 
     if (name === "rekap_keuangan_rumah") {
-      const family = getFamilyMember(rawNumber, senderInfo);
-      if (senderInfo?.isGroup) {
+      if (extraContext?.isGroup) {
         return {
           status: "error",
           pesan: "Rekap keuangan rumah tangga hanya dapat ditanyakan lewat chat pribadi (Japri) untuk menjaga privasi keluarga ya Pak/Bu.",
         };
       }
+      const family = getFamilyMember(rawNumber, senderInfo, extraContext);
       if (!family.isFamily) {
         return {
           status: "error",
@@ -1156,23 +1239,36 @@ const toolDeclarations = [
 // ==========================================
 // MAIN AI PROCESSOR
 // ==========================================
-async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJid) {
+async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJid, extraInfo = {}) {
   if (!apiKey) {
     console.warn("[AI] GEMINI_API_KEY belum diset di .env");
     return null;
   }
 
+  const extraContext = typeof extraInfo === "object" && extraInfo !== null ? { ...extraInfo } : {};
+  if (extraContext.isGroup === undefined) {
+    extraContext.isGroup = senderJid ? senderJid.endsWith("@g.us") : false;
+  }
+  extraContext.actualSenderJid = actualSenderJid;
+  extraContext.senderJid = senderJid;
+
   // Ambil nomor pengirim pesan yang sesungguhnya (buang domain dan ID perangkat multi-device :0, :2, dll)
-  const rawSender = extractPhoneNumber(actualSenderJid || senderJid);
+  const rawSender = extractPhoneNumber(extraContext.senderPn || actualSenderJid || senderJid);
   const sessionKey = (senderJid && senderJid.endsWith("@g.us"))
     ? senderJid
-    : (rawSender || senderJid);
+    : (rawSender || actualSenderJid || senderJid);
 
   // Periksa apakah pengirim memiliki draft setoran/rapel yang menunggu konfirmasi (Opsi 1)
-  if (pendingConfirmations.has(rawSender)) {
-    const pending = pendingConfirmations.get(rawSender);
+  const pendingKey =
+    pendingConfirmations.has(rawSender) ? rawSender :
+    actualSenderJid && pendingConfirmations.has(actualSenderJid) ? actualSenderJid :
+    senderJid && pendingConfirmations.has(senderJid) ? senderJid :
+    extraContext.senderPn && pendingConfirmations.has(extractPhoneNumber(extraContext.senderPn)) ? extractPhoneNumber(extraContext.senderPn) : null;
+
+  if (pendingKey) {
+    const pending = pendingConfirmations.get(pendingKey);
     if (Date.now() - pending.timestamp > 5 * 60 * 1000) {
-      pendingConfirmations.delete(rawSender);
+      pendingConfirmations.delete(pendingKey);
     } else {
       const cleanLower = pesanTeks.trim().toLowerCase();
       const isYes = ["ya", "iya", "oke", "ok", "simpan", "lanjut", "yes", "deal", "setuju", "gas"].includes(cleanLower);
@@ -1180,6 +1276,9 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
 
       if (isYes) {
         pendingConfirmations.delete(rawSender);
+        if (actualSenderJid) pendingConfirmations.delete(actualSenderJid);
+        if (senderJid) pendingConfirmations.delete(senderJid);
+        if (extraContext.senderPn) pendingConfirmations.delete(extractPhoneNumber(extraContext.senderPn));
 
         if (pending.type === "SETORAN") {
           await upsertHitungUlangHarian(pending.tanggal, pending.nominal);
@@ -1215,6 +1314,9 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
 
       if (isNo) {
         pendingConfirmations.delete(rawSender);
+        if (actualSenderJid) pendingConfirmations.delete(actualSenderJid);
+        if (senderJid) pendingConfirmations.delete(senderJid);
+        if (extraContext.senderPn) pendingConfirmations.delete(extractPhoneNumber(extraContext.senderPn));
         if (pending.type === "SETORAN") {
           return `❌ *Pencatatan setoran ronda tanggal ${pending.formattedTanggalText} telah dibatalkan.* Data di database tidak diubah.`;
         }
@@ -1231,13 +1333,15 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
   }
   lastActivityMap.set(sessionKey, now);
 
-  // 2. Deteksi profil warga dari nomor HP
+  // 2. Deteksi profil warga dari nomor HP atau pushName
   let senderInfo = null;
   try {
-    const rawNumber = extractPhoneNumber(actualSenderJid || senderJid);
-    if (rawNumber) {
-      const searchSuffix = rawNumber.slice(-8); // 8 digit terakhir
-      const wargaList = await ambilRefWarga();
+    const wargaList = await ambilRefWarga();
+    const pushName = extraContext.pushName || "";
+
+    // A. Cari berdasarkan nomor HP jika bukan nomor LID semu
+    if (rawSender && (!actualSenderJid?.endsWith("@lid") || extraContext.senderPn)) {
+      const searchSuffix = rawSender.slice(-8); // 8 digit terakhir
       const match = wargaList.find((w) => w.no_hp && extractPhoneNumber(w.no_hp).includes(searchSuffix));
       if (match) {
         senderInfo = {
@@ -1246,6 +1350,43 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
           no_hp: match.no_hp
         };
       }
+    }
+
+    // B. Jika pengirim teridentifikasi Pak Roni (lewat pushName atau nomor)
+    if (!senderInfo && (pushName.toLowerCase().includes("roni") || pushName.toLowerCase().includes("adiatmoko"))) {
+      const roniWarga = wargaList.find((w) => String(w.nomor) === "33") || {
+        nomor: 33,
+        nama: "Bp. Roni Adiatmoko",
+        no_hp: "089673378055"
+      };
+      senderInfo = {
+        nomor_rumah: roniWarga.nomor,
+        nama: roniWarga.nama,
+        no_hp: roniWarga.no_hp || "089673378055"
+      };
+    }
+
+    // C. Jika pengirim Ibu Kartini (lewat pushName atau nomor)
+    if (!senderInfo && (pushName.toLowerCase().includes("kartini") || pushName.toLowerCase().includes("nurul"))) {
+      senderInfo = {
+        nomor_rumah: 33,
+        nama: "Ibu Kartini",
+        no_hp: "085867402287"
+      };
+    }
+
+    // D. Di Japri (private chat 1-on-1 dengan bot): jika belum terdeteksi, default-kan ke Rumah No. 33 (Pak Roni)
+    if (!senderInfo && !extraContext.isGroup) {
+      const roniWarga = wargaList.find((w) => String(w.nomor) === "33") || {
+        nomor: 33,
+        nama: "Bp. Roni Adiatmoko",
+        no_hp: "089673378055"
+      };
+      senderInfo = {
+        nomor_rumah: roniWarga.nomor,
+        nama: roniWarga.nama,
+        no_hp: roniWarga.no_hp || "089673378055"
+      };
     }
   } catch (e) {
     console.warn("[AI] Gagal deteksi sender info:", e.message);
@@ -1257,13 +1398,13 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
     identityContext = `\n[Info Pengirim]: Anda sedang berbicara dengan warga terdaftar yaitu ${senderInfo.nama} dari Rumah No. ${senderInfo.nomor_rumah}. Jika beliau bertanya 'tagihan saya', maksudnya adalah Rumah No. ${senderInfo.nomor_rumah}.`;
   }
 
-  const isAdminSender = isAuthorizedAdmin(actualSenderJid || senderJid, senderInfo);
+  const isAdminSender = isAuthorizedAdmin(actualSenderJid || senderJid, senderInfo, extraContext);
   if (isAdminSender) {
     identityContext += `\n[Status Hak Akses]: Pengirim pesan ini terverifikasi adalah Bapak Roni Adiatmoko (Pengurus / Bendahara Jimpitan Resmi dengan nomor ${ADMIN_CONTACT_DISPLAY}). Beliau memiliki HAK AKSES PENUH untuk mencatat setoran uang ronda dan mencatat rapel jimpitan warga. Jangan pernah menolak perintah beliau untuk mencatat setoran ronda atau rapel warga.`;
   }
 
-  const familyMember = getFamilyMember(actualSenderJid || senderJid, senderInfo);
-  const isPrivateChat = !senderJid || !senderJid.endsWith("@g.us");
+  const familyMember = getFamilyMember(actualSenderJid || senderJid, senderInfo, extraContext);
+  const isPrivateChat = !extraContext.isGroup;
 
   if (familyMember.isFamily && isPrivateChat) {
     if (familyMember.role === "Ibu Kartini") {
@@ -1444,7 +1585,7 @@ Aturan Penulisan Pesan WhatsApp:
       const fnArgs = fnPart.functionCall.args || {};
       const fnId = fnPart.functionCall.id;
 
-      const toolResult = await executeTool(fnName, fnArgs, senderInfo, rawSender);
+      const toolResult = await executeTool(fnName, fnArgs, senderInfo, rawSender, extraContext);
 
       // Siapkan request kedua dengan menyertakan functionCall model dan functionResponse user
       history.push(modelContent);
@@ -1481,19 +1622,6 @@ Aturan Penulisan Pesan WhatsApp:
         return null;
       }
 
-function extractTextFromParts(parts) {
-  if (!Array.isArray(parts)) return null;
-  const validTexts = parts
-    .filter((p) => p.text && !p.thought)
-    .map((p) => p.text.trim())
-    .filter(Boolean);
-  if (validTexts.length > 0) {
-    return validTexts.join("\n\n");
-  }
-  const anyText = parts.find((p) => p.text)?.text;
-  return anyText ? anyText.trim() : null;
-}
-
       const replyText = extractTextFromParts(json.candidates[0].content?.parts);
 
       if (replyText) {
@@ -1524,8 +1652,8 @@ function extractTextFromParts(parts) {
   }
 }
 
-async function prosesPesanDenganAI(pesanTeks, senderJid, actualSenderJid) {
-  const reply = await _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJid);
+async function prosesPesanDenganAI(pesanTeks, senderJid, actualSenderJid, extraInfo = {}) {
+  const reply = await _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJid, extraInfo);
   return reply ? attachSignature(reply) : null;
 }
 

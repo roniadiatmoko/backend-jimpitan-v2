@@ -525,9 +525,17 @@ app.post("/api/whatsapp/test", async (req, res) => {
 
 app.post("/api/whatsapp/chat-test", async (req, res) => {
   try {
-    const { message, sender } = req.body || {};
+    const { message, sender, pushName, isGroup } = req.body || {};
     const { prosesPesanDenganAI } = require("./src/services/aiService");
-    const reply = await prosesPesanDenganAI(message || "Halo", sender || "628123456789@s.whatsapp.net");
+    const reply = await prosesPesanDenganAI(
+      message || "Halo",
+      sender || "6289673378055@s.whatsapp.net",
+      sender || "6289673378055@s.whatsapp.net",
+      {
+        pushName: pushName || "Roni Adiatmoko",
+        isGroup: isGroup || false
+      }
+    );
     res.json({ status: "OK", reply });
   } catch (err) {
     res.status(500).json({ status: "ERROR", message: err.message });

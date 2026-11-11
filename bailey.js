@@ -224,6 +224,8 @@ async function startBot() {
 
         const isGroup = remoteJid.endsWith("@g.us");
         const senderJid = isGroup ? (m.key.participant || m.participant || remoteJid) : remoteJid;
+        const pushName = m.pushName || "";
+        const senderPn = m.key?.participantPn || m.key?.remoteJidAlt || m.participantPn || "";
 
         if (isGroup) {
           const lower = cleanText.toLowerCase();
@@ -246,7 +248,7 @@ async function startBot() {
           if (!isTriggered) return;
         }
 
-        console.log(`[WA Chat Masuk dari ${remoteJid} (Sender: ${senderJid})]: "${cleanText}"`);
+        console.log(`[WA Chat Masuk dari ${remoteJid} (Sender: ${senderJid}, PN: ${senderPn || "-"}, PushName: ${pushName || "-"})]: "${cleanText}"`);
 
         // Typing indicator
         try {
@@ -254,7 +256,11 @@ async function startBot() {
         } catch (e) {}
 
         const { prosesPesanDenganAI } = require("./src/services/aiService");
-        const reply = await prosesPesanDenganAI(cleanText, remoteJid, senderJid);
+        const reply = await prosesPesanDenganAI(cleanText, remoteJid, senderJid, {
+          pushName,
+          senderPn,
+          isGroup
+        });
 
         try {
           await sock.sendPresenceUpdate("paused", remoteJid);
