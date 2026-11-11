@@ -29,8 +29,27 @@ const lastActivityMap = new Map();
 
 // In-memory pending rapel confirmation: rawSenderNumber -> draftData
 const pendingConfirmations = new Map();
-const AUTHORIZED_ADMIN_NUMBER = process.env.ADMIN_PHONE_NUMBER || "6289673378055";
-const ADMIN_CONTACT_DISPLAY = process.env.ADMIN_PHONE_NUMBER || "089673378055";
+
+// Daftar nomor pengurus & keluarga yang terverifikasi (tetap aktif meski .env kosong/dummy)
+const KNOWN_RONI_NUMBERS = ["6289673378055", "089673378055", "89673378055", "73378055"];
+const KNOWN_IBU_NUMBERS = ["6285867402287", "085867402287", "85867402287", "67402287"];
+
+function isDummyNumber(num) {
+  if (!num) return true;
+  const digits = String(num).replace(/\D/g, "");
+  return digits.length < 8 || digits.includes("000000");
+}
+
+function getAdminNumbers() {
+  const list = [...KNOWN_RONI_NUMBERS];
+  const envNum = process.env.ADMIN_PHONE_NUMBER;
+  if (envNum && !isDummyNumber(envNum)) {
+    list.push(envNum);
+  }
+  return list;
+}
+
+const ADMIN_CONTACT_DISPLAY = "089673378055";
 
 // Ekstrak nomor HP murni (hanya digit) dari JID WhatsApp.
 // Menangani multi-device format seperti '6289673378055:2@s.whatsapp.net' -> '6289673378055'
@@ -43,31 +62,73 @@ function extractPhoneNumber(jidOrNumber) {
 }
 
 // Cek apakah nomor pengirim adalah admin yang berwenang
-function isAuthorizedAdmin(jidOrNumber) {
+function isAuthorizedAdmin(jidOrNumber, senderInfo = null) {
   const digits = extractPhoneNumber(jidOrNumber);
-  const adminDigits = extractPhoneNumber(process.env.ADMIN_PHONE_NUMBER || AUTHORIZED_ADMIN_NUMBER);
-  const tail = adminDigits.length > 9 ? adminDigits.slice(-9) : adminDigits;
-  return tail ? digits.endsWith(tail) : false;
+  const adminList = getAdminNumbers();
+
+  // 1. Cek langsung dari digit pengirim
+  for (const adm of adminList) {
+    const admClean = extractPhoneNumber(adm);
+    const tail = admClean.length > 8 ? admClean.slice(-8) : admClean;
+    if (tail && digits && digits.endsWith(tail)) return true;
+  }
+
+  // 2. Cek dari nomor HP warga terdaftar jika ada
+  if (senderInfo?.no_hp) {
+    const infoDigits = extractPhoneNumber(senderInfo.no_hp);
+    for (const adm of adminList) {
+      const admClean = extractPhoneNumber(adm);
+      const tail = admClean.length > 8 ? admClean.slice(-8) : admClean;
+      if (tail && infoDigits && infoDigits.endsWith(tail)) return true;
+    }
+  }
+
+  // 3. Cek apakah warga terdaftar adalah Pak Roni (Rumah No. 33 atau No. 20)
+  if (senderInfo) {
+    const noRumah = String(senderInfo.nomor_rumah || "").trim();
+    if (noRumah === "33" || noRumah === "20") return true;
+    if (senderInfo.nama && senderInfo.nama.toLowerCase().includes("roni")) return true;
+  }
+
+  return false;
 }
 
 // Otorisasi & Deteksi Keluarga untuk Modul Keuangan Rumah Tangga
-const PAK_RONI_NUMBER = process.env.ADMIN_PHONE_NUMBER || "6289673378055";
-const IBU_NUMBER = process.env.FAMILY_PHONE_IBU || "6285867402287";
-
-function getFamilyMember(jidOrNumber) {
+function getFamilyMember(jidOrNumber, senderInfo = null) {
   const digits = extractPhoneNumber(jidOrNumber);
-  const roniDigits = extractPhoneNumber(process.env.ADMIN_PHONE_NUMBER || PAK_RONI_NUMBER);
-  const roniTail = roniDigits.length > 9 ? roniDigits.slice(-9) : roniDigits;
+  const adminList = getAdminNumbers();
 
-  const ibuDigits = extractPhoneNumber(process.env.FAMILY_PHONE_IBU || IBU_NUMBER);
-  const ibuTail = ibuDigits.length > 9 ? ibuDigits.slice(-9) : ibuDigits;
+  // 1. Cek Pak Roni dari digit
+  for (const adm of adminList) {
+    const admClean = extractPhoneNumber(adm);
+    const tail = admClean.length > 8 ? admClean.slice(-8) : admClean;
+    if (tail && digits && digits.endsWith(tail)) {
+      return { isFamily: true, role: "Pak Roni", title: "Pak Roni", name: "Bapak Roni Adiatmoko" };
+    }
+  }
 
-  if (roniTail && digits.endsWith(roniTail)) {
-    return { isFamily: true, role: "Pak Roni", title: "Pak Roni", name: "Bapak Roni Adiatmoko" };
+  // 2. Cek Ibu Kartini dari digit
+  const ibuList = [...KNOWN_IBU_NUMBERS];
+  const envIbu = process.env.FAMILY_PHONE_IBU;
+  if (envIbu && !isDummyNumber(envIbu)) {
+    ibuList.push(envIbu);
   }
-  if (ibuTail && digits.endsWith(ibuTail)) {
-    return { isFamily: true, role: "Ibu Kartini", title: "Ibu Kartini", name: "Ibu Kartini" };
+  for (const ibu of ibuList) {
+    const ibuClean = extractPhoneNumber(ibu);
+    const tail = ibuClean.length > 8 ? ibuClean.slice(-8) : ibuClean;
+    if (tail && digits && digits.endsWith(tail)) {
+      return { isFamily: true, role: "Ibu Kartini", title: "Ibu Kartini", name: "Ibu Kartini" };
+    }
   }
+
+  // 3. Cek dari profil warga terdaftar
+  if (senderInfo) {
+    const noRumah = String(senderInfo.nomor_rumah || "").trim();
+    if (noRumah === "33" || noRumah === "20" || (senderInfo.nama && senderInfo.nama.toLowerCase().includes("roni"))) {
+      return { isFamily: true, role: "Pak Roni", title: "Pak Roni", name: "Bapak Roni Adiatmoko" };
+    }
+  }
+
   return { isFamily: false, role: null, title: null, name: null };
 }
 
@@ -430,7 +491,7 @@ async function executeTool(name, args, senderInfo, rawNumber) {
 
     if (name === "draft_input_rapel") {
       const cleanNumber = extractPhoneNumber(rawNumber || senderInfo?.no_hp);
-      if (!isAuthorizedAdmin(cleanNumber)) {
+      if (!isAuthorizedAdmin(rawNumber || cleanNumber, senderInfo)) {
         return {
           status: "UNAUTHORIZED",
           pesan: `Akses Ditolak: Pencatatan rapel melalui WhatsApp hanya diizinkan untuk Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko - ${ADMIN_CONTACT_DISPLAY}).`
@@ -563,7 +624,7 @@ async function executeTool(name, args, senderInfo, rawNumber) {
 
     if (name === "draft_input_setoran") {
       const cleanNumber = extractPhoneNumber(rawNumber || senderInfo?.no_hp);
-      if (!isAuthorizedAdmin(cleanNumber)) {
+      if (!isAuthorizedAdmin(rawNumber || cleanNumber, senderInfo)) {
         return {
           status: "UNAUTHORIZED",
           pesan: `Akses Ditolak: Pencatatan setoran uang ronda hanya dapat dilakukan oleh Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko - ${ADMIN_CONTACT_DISPLAY}).`
@@ -695,7 +756,7 @@ async function executeTool(name, args, senderInfo, rawNumber) {
 
     if (name === "catat_pengeluaran_jimpitan") {
       const cleanNumber = extractPhoneNumber(rawNumber || senderInfo?.no_hp || senderInfo?.jid);
-      if (!isAuthorizedAdmin(cleanNumber)) {
+      if (!isAuthorizedAdmin(rawNumber || cleanNumber, senderInfo)) {
         return {
           status: "error",
           pesan: `Akses Ditolak: Pencatatan pengeluaran kas jimpitan warga hanya dapat dilakukan oleh Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko - ${ADMIN_CONTACT_DISPLAY}).`,
@@ -758,7 +819,7 @@ async function executeTool(name, args, senderInfo, rawNumber) {
     }
 
     if (name === "catat_keuangan_rumah") {
-      const family = getFamilyMember(rawNumber || senderInfo?.jid);
+      const family = getFamilyMember(rawNumber, senderInfo);
       if (senderInfo?.isGroup) {
         return {
           status: "error",
@@ -797,7 +858,7 @@ async function executeTool(name, args, senderInfo, rawNumber) {
     }
 
     if (name === "rekap_keuangan_rumah") {
-      const family = getFamilyMember(rawNumber || senderInfo?.jid);
+      const family = getFamilyMember(rawNumber, senderInfo);
       if (senderInfo?.isGroup) {
         return {
           status: "error",
@@ -846,6 +907,40 @@ async function executeTool(name, args, senderInfo, rawNumber) {
           frekuensi: `${k.frekuensi} kali`,
         })),
         kontribusi_catat: rekap.dicatatOlehSummary,
+      };
+    }
+
+    if (name === "cek_jadwal_ronda") {
+      const { getJadwalRondaByHari } = require("../features/presensi-ronda/model");
+      const hariArr = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+      const nowWib = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
+      const wibDayIdx = new Date(nowWib + "T12:00:00+07:00").getDay();
+      const hariIniNama = hariArr[wibDayIdx];
+
+      let targetHari = args.hari ? String(args.hari).trim() : "";
+      if (!targetHari || targetHari.toLowerCase() === "hari ini" || targetHari.toLowerCase() === "malam ini") {
+        targetHari = hariIniNama;
+      } else if (targetHari.toLowerCase() !== "semua") {
+        targetHari = targetHari.charAt(0).toUpperCase() + targetHari.slice(1).toLowerCase();
+      }
+
+      const rows = await getJadwalRondaByHari(targetHari.toLowerCase() === "semua" ? null : targetHari);
+      if (!rows || rows.length === 0) {
+        return {
+          status: "KOSONG",
+          hari: targetHari,
+          pesan: `Belum ada jadwal petugas ronda yang tercatat untuk hari ${targetHari}.`
+        };
+      }
+
+      return {
+        status: "OK",
+        hari: targetHari,
+        total_petugas: rows.length,
+        daftar_petugas: rows.map((r) => ({
+          nomor_rumah: r.nomor_rumah,
+          nama: r.nama_penghuni || `Rumah No. ${r.nomor_rumah}`
+        }))
       };
     }
 
@@ -1040,6 +1135,19 @@ const toolDeclarations = [
             }
           }
         }
+      },
+      {
+        name: "cek_jadwal_ronda",
+        description: "Mengecek jadwal petugas / punggawa ronda mingguan (siapa yang bertugas ronda hari ini / malam ini, jadwal hari tertentu seperti Senin, Selasa, dst., atau seluruh jadwal mingguan). Gunakan ini jika user menanyakan jadwal ronda, petugas ronda hari ini, atau siapa yang giliran ronda.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            hari: {
+              type: "STRING",
+              description: "Nama hari dalam bahasa Indonesia (contoh: 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'). Kosongkan atau isi 'hari ini' jika menanyakan ronda hari ini/malam ini."
+            }
+          }
+        }
       }
     ]
   }
@@ -1149,12 +1257,12 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
     identityContext = `\n[Info Pengirim]: Anda sedang berbicara dengan warga terdaftar yaitu ${senderInfo.nama} dari Rumah No. ${senderInfo.nomor_rumah}. Jika beliau bertanya 'tagihan saya', maksudnya adalah Rumah No. ${senderInfo.nomor_rumah}.`;
   }
 
-  const isAdminSender = isAuthorizedAdmin(actualSenderJid || senderJid);
+  const isAdminSender = isAuthorizedAdmin(actualSenderJid || senderJid, senderInfo);
   if (isAdminSender) {
     identityContext += `\n[Status Hak Akses]: Pengirim pesan ini terverifikasi adalah Bapak Roni Adiatmoko (Pengurus / Bendahara Jimpitan Resmi dengan nomor ${ADMIN_CONTACT_DISPLAY}). Beliau memiliki HAK AKSES PENUH untuk mencatat setoran uang ronda dan mencatat rapel jimpitan warga. Jangan pernah menolak perintah beliau untuk mencatat setoran ronda atau rapel warga.`;
   }
 
-  const familyMember = getFamilyMember(actualSenderJid || senderJid);
+  const familyMember = getFamilyMember(actualSenderJid || senderJid, senderInfo);
   const isPrivateChat = !senderJid || !senderJid.endsWith("@g.us");
 
   if (familyMember.isFamily && isPrivateChat) {
@@ -1272,6 +1380,22 @@ Panduan Khusus Keuangan Rumah Tangga Pribadi (HANYA Japri Pak Roni & Ibu Kartini
   • Jawab pertanyaan user secara terfokus dan cerdas. Misalnya jika ditanyakan pengeluaran terbesar: sebutkan dengan jelas apa kategori terbesarnya (nominal dan persentasenya) serta daftar 1-3 transaksi satuan yang paling besar nilainya di bulan tersebut.
 - Fitur keuangan rumah tangga SAMA SEKALI TIDAK BOLEH dibahas di dalam grup RT warga.
 
+Informasi Ketersediaan Fitur & Kemampuan Sistem:
+- Jika user menanyakan apakah fitur tertentu sudah ada, fitur apa saja yang ada, atau apa yang bisa Anda bantu (contoh: "fitur keuangan rumah tangga sudah ada?", "bisa catat belanja?", "fitur apa saja?"):
+  • Jelaskan dengan ramah, ceria, dan gamblang:
+    "Halo! Ya, fitur pencatatan dan rekap *Keuangan Rumah Tangga* sudah aktif dan siap digunakan! 😊✨
+    Fitur ini khusus dapat digunakan oleh Bapak Roni dan Ibu Kartini secara privat lewat chat pribadi (Japri) ini.
+    Contoh yang bisa dilakukan:
+    • *Catat belanja*: 'catat beli beras 75rb, bensin 25rb'
+    • *Pengeluaran terbesar*: 'apa pengeluaran terbesar bulan ini?'
+    • *Rekap bulanan*: 'rekap pengeluaran bulan november'
+    Selain itu, Nara juga melayani informasi iuran jimpitan warga, cek saldo kas, laporan harian, cek jadwal ronda, dan setoran uang ronda 👍"
+
+Panduan Jadwal Punggawa Ronda:
+- Jika user bertanya siapa yang bertugas ronda atau menanyakan jadwal ronda (contoh: "siapa yang ronda malam ini?", "jadwal ronda hari ini siapa?", "jadwal ronda hari senin siapa aja?"):
+  • Panggil tool 'cek_jadwal_ronda'.
+  • Tampilkan daftar nama petugas dan nomor rumahnya dengan rapi dan ramah.
+
 Aturan Penulisan Pesan WhatsApp:
 - Gunakan *bold* pada nominal uang, nomor rumah, dan kata penting.
 - Gunakan bullet point (•) untuk daftar rincian agar mudah dibaca di layar HP.
@@ -1357,8 +1481,20 @@ Aturan Penulisan Pesan WhatsApp:
         return null;
       }
 
-      const replyPart = json.candidates[0].content.parts.find((p) => p.text);
-      const replyText = replyPart ? replyPart.text : null;
+function extractTextFromParts(parts) {
+  if (!Array.isArray(parts)) return null;
+  const validTexts = parts
+    .filter((p) => p.text && !p.thought)
+    .map((p) => p.text.trim())
+    .filter(Boolean);
+  if (validTexts.length > 0) {
+    return validTexts.join("\n\n");
+  }
+  const anyText = parts.find((p) => p.text)?.text;
+  return anyText ? anyText.trim() : null;
+}
+
+      const replyText = extractTextFromParts(json.candidates[0].content?.parts);
 
       if (replyText) {
         history.push({
@@ -1369,9 +1505,8 @@ Aturan Penulisan Pesan WhatsApp:
         return replyText;
       }
     } else {
-      // Direct text reply (salam, tanya kabar, info umum)
-      const textPart = modelContent.parts.find((p) => p.text);
-      const replyText = textPart ? textPart.text : null;
+      // Direct text reply (salam, tanya kabar, info umum, tanya fitur)
+      const replyText = extractTextFromParts(modelContent.parts);
       if (replyText) {
         history.push({
           role: "model",
