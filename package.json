@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon index.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "sync-env": "node scripts/sync_env.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.21",

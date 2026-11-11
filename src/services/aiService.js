@@ -34,7 +34,7 @@ const {
 } = require("../features/keuangan-rumah/model");
 
 const apiKey = process.env.GEMINI_API_KEY;
-const modelName = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 // In-memory conversation history: senderJid -> [{ role, parts }]
 const conversationMemory = new Map();
