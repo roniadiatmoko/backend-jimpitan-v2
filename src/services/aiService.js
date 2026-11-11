@@ -13,7 +13,11 @@ require('dotenv').config();
 const { getHitungKekuranganTahun } = require('../features/laporan/model');
 const { getSaldoTerkini } = require('../features/rekap/model');
 const { upsertHitungUlangHarian } = require('../features/hitung_ulang_jimpitan_harian/model');
-const { ambilLaporanHarian, ambilRefWarga } = require('../../db');
+const { ambilLaporanHarian, ambilRefWarga, simpanPengeluaran } = require('../../db');
+const {
+  insertBatchTransaksi: insertBatchKeuanganRumah,
+  getRekap: getRekapKeuanganRumah,
+} = require("../features/keuangan-rumah/model");
 
 const apiKey = process.env.GEMINI_API_KEY;
 const modelName = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
@@ -25,7 +29,47 @@ const lastActivityMap = new Map();
 
 // In-memory pending rapel confirmation: rawSenderNumber -> draftData
 const pendingConfirmations = new Map();
-const AUTHORIZED_ADMIN_NUMBER = "6289673378055";
+const AUTHORIZED_ADMIN_NUMBER = process.env.ADMIN_PHONE_NUMBER || "6289673378055";
+const ADMIN_CONTACT_DISPLAY = process.env.ADMIN_PHONE_NUMBER || "089673378055";
+
+// Ekstrak nomor HP murni (hanya digit) dari JID WhatsApp.
+// Menangani multi-device format seperti '6289673378055:2@s.whatsapp.net' -> '6289673378055'
+function extractPhoneNumber(jidOrNumber) {
+  if (!jidOrNumber) return "";
+  const str = String(jidOrNumber).trim();
+  const beforeAt = str.split("@")[0];
+  const phoneOnly = beforeAt.split(":")[0];
+  return phoneOnly.replace(/\D/g, "");
+}
+
+// Cek apakah nomor pengirim adalah admin yang berwenang
+function isAuthorizedAdmin(jidOrNumber) {
+  const digits = extractPhoneNumber(jidOrNumber);
+  const adminDigits = extractPhoneNumber(process.env.ADMIN_PHONE_NUMBER || AUTHORIZED_ADMIN_NUMBER);
+  const tail = adminDigits.length > 9 ? adminDigits.slice(-9) : adminDigits;
+  return tail ? digits.endsWith(tail) : false;
+}
+
+// Otorisasi & Deteksi Keluarga untuk Modul Keuangan Rumah Tangga
+const PAK_RONI_NUMBER = process.env.ADMIN_PHONE_NUMBER || "6289673378055";
+const IBU_NUMBER = process.env.FAMILY_PHONE_IBU || "6285867402287";
+
+function getFamilyMember(jidOrNumber) {
+  const digits = extractPhoneNumber(jidOrNumber);
+  const roniDigits = extractPhoneNumber(process.env.ADMIN_PHONE_NUMBER || PAK_RONI_NUMBER);
+  const roniTail = roniDigits.length > 9 ? roniDigits.slice(-9) : roniDigits;
+
+  const ibuDigits = extractPhoneNumber(process.env.FAMILY_PHONE_IBU || IBU_NUMBER);
+  const ibuTail = ibuDigits.length > 9 ? ibuDigits.slice(-9) : ibuDigits;
+
+  if (roniTail && digits.endsWith(roniTail)) {
+    return { isFamily: true, role: "Pak Roni", title: "Pak Roni", name: "Bapak Roni Adiatmoko" };
+  }
+  if (ibuTail && digits.endsWith(ibuTail)) {
+    return { isFamily: true, role: "Ibu Kartini", title: "Ibu Kartini", name: "Ibu Kartini" };
+  }
+  return { isFamily: false, role: null, title: null, name: null };
+}
 
 // Helper rupiah format
 function formatRp(val) {
@@ -46,43 +90,70 @@ async function executeTool(name, args, senderInfo, rawNumber) {
 
   try {
     if (name === "cek_kekurangan_bulan") {
-      let month = Number(args.bulan);
+      let endMonth = Number(args.bulan);
       const year = Number(args.tahun) || new Date().getFullYear();
-      if (!month || month < 1 || month > 12) {
-        month = new Date().getMonth() + 1;
+      if (!endMonth || endMonth < 1 || endMonth > 12) {
+        endMonth = new Date().getMonth() + 1;
       }
 
       const monthNames = [
         "januari", "februari", "maret", "april", "mei", "juni",
         "juli", "agustus", "september", "oktober", "november", "desember"
       ];
-      const monthKey = monthNames[month - 1];
+      const endMonthKey = monthNames[endMonth - 1];
       const data = await getHitungKekuranganTahun(year);
       const wargaList = await ambilRefWarga();
       const homeMap = {};
       for (const w of wargaList) homeMap[String(w.nomor)] = w;
 
+      // Akumulasi dari Januari s/d bulan yang diminta (sama seperti fitur 'Kekurangan Bayar per Tahun' & 'Salin tagihan WA')
+      // Kecuali jika user secara eksplisit meminta hanya bulan tersebut saja
+      const hanyaBulanIni = args.hanya_bulan_ini === true;
+      const targetMonths = hanyaBulanIni
+        ? [endMonthKey]
+        : monthNames.slice(0, endMonth);
+
       const listTagihan = data
         .map((item) => {
-          const days = Number(item[monthKey]) || 0;
-          if (days <= 0) return null;
+          let totalDays = 0;
+          const rincianBulanRumah = [];
+          for (const m of targetMonths) {
+            const days = Number(item[m]) || 0;
+            if (days > 0) {
+              totalDays += days;
+              rincianBulanRumah.push(`${m.charAt(0).toUpperCase() + m.slice(1)}: ${days} hari`);
+            }
+          }
+
+          if (totalDays <= 0) return null;
           const nama = homeMap[item.nomor_rumah]?.nama || "-";
           return {
-            nomor_rumah: item.nomor_rumah,
+            nomor_rumah: Number(item.nomor_rumah) || item.nomor_rumah,
             nama: nama,
-            hari_kurang: days,
-            nominal: formatRp(days * 500),
+            hari_kurang: totalDays,
+            nominal: formatRp(totalDays * 500),
+            nominal_angka: totalDays * 500,
+            rincian_bulan: rincianBulanRumah.join(", "),
+            format_baris: `• No. ${item.nomor_rumah} - ${nama} | ${formatRp(totalDays * 500)} (${totalDays} hari)`
           };
         })
         .filter(Boolean);
 
       listTagihan.sort((a, b) => Number(a.nomor_rumah) - Number(b.nomor_rumah));
+      const totalNominalSemua = listTagihan.reduce((acc, curr) => acc + curr.nominal_angka, 0);
+
+      const labelPeriode = hanyaBulanIni
+        ? `Bulan ${endMonthKey.charAt(0).toUpperCase() + endMonthKey.slice(1)} ${year}`
+        : `Januari s/d ${endMonthKey.charAt(0).toUpperCase() + endMonthKey.slice(1)} ${year}`;
 
       return {
-        bulan: monthKey,
+        periode: labelPeriode,
+        sampai_bulan: endMonthKey,
         tahun: year,
         total_rumah_belum_lunas: listTagihan.length,
+        total_nominal_keseluruhan: formatRp(totalNominalSemua),
         daftar_tagihan: listTagihan,
+        catatan: "Perhitungan ini merupakan akumulasi Januari s/d " + endMonthKey + " (sama seperti tombol Salin Tagihan WA di menu Kekurangan Bayar Tahun)."
       };
     }
 
@@ -97,6 +168,7 @@ async function executeTool(name, args, senderInfo, rawNumber) {
       }
 
       const year = Number(args.tahun) || new Date().getFullYear();
+      const endMonth = Number(args.sampai_bulan) || 12;
       const data = await getHitungKekuranganTahun(year);
       const item = data.find((d) => String(d.nomor_rumah) === nomor);
       const wargaList = await ambilRefWarga();
@@ -110,15 +182,16 @@ async function executeTool(name, args, senderInfo, rawNumber) {
         "januari", "februari", "maret", "april", "mei", "juni",
         "juli", "agustus", "september", "oktober", "november", "desember"
       ];
+      const targetMonths = monthNames.slice(0, Math.min(Math.max(endMonth, 1), 12));
       const rincianBulan = [];
       let totalHari = 0;
 
-      monthNames.forEach((m) => {
+      targetMonths.forEach((m) => {
         const days = Number(item[m]) || 0;
         if (days > 0) {
           totalHari += days;
           rincianBulan.push({
-            bulan: m,
+            bulan: m.charAt(0).toUpperCase() + m.slice(1),
             hari: days,
             nominal: formatRp(days * 500),
           });
@@ -129,6 +202,7 @@ async function executeTool(name, args, senderInfo, rawNumber) {
         nomor_rumah: nomor,
         nama_penghuni: warga?.nama || "-",
         sudah_menghuni: warga?.sudah_menghuni === 1,
+        periode: `Januari s/d ${targetMonths[targetMonths.length - 1].charAt(0).toUpperCase() + targetMonths[targetMonths.length - 1].slice(1)} ${year}`,
         total_hari_tunggakan: totalHari,
         total_nominal: formatRp(totalHari * 500),
         rincian_per_bulan: rincianBulan,
@@ -165,7 +239,11 @@ async function executeTool(name, args, senderInfo, rawNumber) {
       };
 
       if (!tgl || tgl === "latest" || tgl === "terbaru" || tgl === "terakhir") {
-        tgl = (await getLatestTgl()) || new Date().toISOString().split("T")[0];
+        tgl =
+          (await getLatestTgl()) ||
+          new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(
+            new Date()
+          );
       }
 
       let laporan = await ambilLaporanHarian(tgl);
@@ -351,11 +429,11 @@ async function executeTool(name, args, senderInfo, rawNumber) {
     }
 
     if (name === "draft_input_rapel") {
-      const cleanNumber = String(rawNumber || senderInfo?.no_hp || "").replace(/\D/g, "");
-      if (!cleanNumber.endsWith("89673378055")) {
+      const cleanNumber = extractPhoneNumber(rawNumber || senderInfo?.no_hp);
+      if (!isAuthorizedAdmin(cleanNumber)) {
         return {
           status: "UNAUTHORIZED",
-          pesan: "Akses Ditolak: Pencatatan rapel melalui WhatsApp hanya diizinkan untuk Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko)."
+          pesan: `Akses Ditolak: Pencatatan rapel melalui WhatsApp hanya diizinkan untuk Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko - ${ADMIN_CONTACT_DISPLAY}).`
         };
       }
 
@@ -484,11 +562,11 @@ async function executeTool(name, args, senderInfo, rawNumber) {
     }
 
     if (name === "draft_input_setoran") {
-      const cleanNumber = String(rawNumber || senderInfo?.no_hp || "").replace(/\D/g, "");
-      if (!cleanNumber.endsWith("89673378055")) {
+      const cleanNumber = extractPhoneNumber(rawNumber || senderInfo?.no_hp);
+      if (!isAuthorizedAdmin(cleanNumber)) {
         return {
           status: "UNAUTHORIZED",
-          pesan: "Akses Ditolak: Pencatatan setoran uang ronda hanya dapat dilakukan oleh Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko)."
+          pesan: `Akses Ditolak: Pencatatan setoran uang ronda hanya dapat dilakukan oleh Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko - ${ADMIN_CONTACT_DISPLAY}).`
         };
       }
 
@@ -608,10 +686,166 @@ async function executeTool(name, args, senderInfo, rawNumber) {
         ],
         pembayaran_transfer: {
           metode: "Aplikasi DANA",
-          nomor_tujuan: "089673378055",
+          nomor_tujuan: ADMIN_CONTACT_DISPLAY,
           atas_nama: "Roni Adiatmoko"
         },
         konfirmasi: "Mohon kirim bukti transfer atau konfirmasi ke chat ini setelah pembayaran berhasil."
+      };
+    }
+
+    if (name === "catat_pengeluaran_jimpitan") {
+      const cleanNumber = extractPhoneNumber(rawNumber || senderInfo?.no_hp || senderInfo?.jid);
+      if (!isAuthorizedAdmin(cleanNumber)) {
+        return {
+          status: "error",
+          pesan: `Akses Ditolak: Pencatatan pengeluaran kas jimpitan warga hanya dapat dilakukan oleh Pengurus/Bendahara berwenang (Bapak Roni Adiatmoko - ${ADMIN_CONTACT_DISPLAY}).`,
+        };
+      }
+
+      const items = Array.isArray(args.items) && args.items.length > 0
+        ? args.items
+        : [
+            {
+              nominal: args.nominal,
+              keterangan: args.keterangan,
+              tanggal: args.tanggal,
+              penanggung_jawab: args.penanggung_jawab,
+            },
+          ];
+
+      const savedItems = [];
+      let totalNominal = 0;
+
+      for (const it of items) {
+        const nominalNum = Number(it.nominal) || 0;
+        if (nominalNum <= 0) continue;
+        const tgl =
+          it.tanggal ||
+          new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(
+            new Date()
+          );
+        const ket = String(it.keterangan || "").trim();
+        const pj = String(it.penanggung_jawab || "Bpk. Roni").trim();
+        const bukti = it.bukti_foto || null;
+
+        await simpanPengeluaran(tgl, String(nominalNum), pj, ket, bukti);
+        totalNominal += nominalNum;
+        savedItems.push({
+          tanggal: tgl,
+          nominal: nominalNum,
+          nominal_formatted: formatRp(nominalNum),
+          keterangan: ket,
+          penanggung_jawab: pj,
+        });
+      }
+
+      if (savedItems.length === 0) {
+        return {
+          status: "error",
+          pesan: "Gagal mencatat: nominal pengeluaran kas jimpitan harus lebih dari Rp 0.",
+        };
+      }
+
+      return {
+        status: "success",
+        jenis: "KAS_JIMPITAN_WARGA",
+        jumlah_transaksi: savedItems.length,
+        total_nominal: totalNominal,
+        total_formatted: formatRp(totalNominal),
+        rincian: savedItems,
+        pesan: `Berhasil mencatat ${savedItems.length} transaksi pengeluaran KAS JIMPITAN WARGA (Total: ${formatRp(totalNominal)}).`,
+      };
+    }
+
+    if (name === "catat_keuangan_rumah") {
+      const family = getFamilyMember(rawNumber || senderInfo?.jid);
+      if (senderInfo?.isGroup) {
+        return {
+          status: "error",
+          pesan: "Pencatatan keuangan rumah tangga hanya dapat dilakukan lewat chat pribadi (Japri) untuk menjaga privasi keluarga ya Pak/Bu.",
+        };
+      }
+      if (!family.isFamily) {
+        return {
+          status: "error",
+          pesan: "Akses Ditolak: Fitur pencatatan keuangan rumah tangga hanya dapat diakses oleh Bapak Roni dan Ibu Kartini.",
+        };
+      }
+
+      const items = Array.isArray(args.items) ? args.items : [args.items];
+      if (items.length === 0) {
+        return { status: "error", pesan: "Tidak ada transaksi yang dapat dicatat." };
+      }
+
+      const results = await insertBatchKeuanganRumah(items, family.role);
+      const total = results.reduce((acc, c) => acc + (Number(c.nominal) || 0), 0);
+
+      return {
+        status: "success",
+        dicatat_oleh: family.role,
+        jumlah_transaksi: results.length,
+        total_nominal: total,
+        total_formatted: formatRp(total),
+        rincian: results.map((r) => ({
+          keterangan: r.keterangan,
+          kategori: r.kategori,
+          nominal: formatRp(r.nominal),
+          sumber_dana: r.sumber_dana,
+        })),
+        pesan: `Berhasil mencatat ${results.length} transaksi keuangan rumah tangga (Total: ${formatRp(total)}).`,
+      };
+    }
+
+    if (name === "rekap_keuangan_rumah") {
+      const family = getFamilyMember(rawNumber || senderInfo?.jid);
+      if (senderInfo?.isGroup) {
+        return {
+          status: "error",
+          pesan: "Rekap keuangan rumah tangga hanya dapat ditanyakan lewat chat pribadi (Japri) untuk menjaga privasi keluarga ya Pak/Bu.",
+        };
+      }
+      if (!family.isFamily) {
+        return {
+          status: "error",
+          pesan: "Akses Ditolak: Fitur rekap keuangan rumah tangga hanya dapat diakses oleh Bapak Roni dan Ibu Kartini.",
+        };
+      }
+
+      const rekap = await getRekapKeuanganRumah({
+        bulan: args.bulan,
+        tahun: args.tahun,
+      });
+
+      return {
+        status: "success",
+        pemohon: family.role,
+        periode: rekap.periode,
+        total_pengeluaran: formatRp(rekap.totalPengeluaran),
+        total_pemasukan: formatRp(rekap.totalPemasukan),
+        sisa_saldo: formatRp(rekap.sisaSaldo),
+        total_transaksi: rekap.totalTransaksi,
+        kategori_terbesar: rekap.topKategori
+          ? {
+              kategori: rekap.topKategori.kategori,
+              total: formatRp(rekap.topKategori.total),
+              persentase: `${rekap.topKategori.persentase}%`,
+            }
+          : null,
+        pengeluaran_terbesar: (rekap.topPengeluaran || []).map((t, idx) => ({
+          peringkat: idx + 1,
+          keterangan: t.keterangan,
+          kategori: t.kategori,
+          nominal: formatRp(t.nominal),
+          tanggal: t.tanggal,
+          dicatat_oleh: t.dicatat_oleh,
+        })),
+        breakdown_kategori: (rekap.breakdownKategori || []).map((k) => ({
+          kategori: k.kategori,
+          total: formatRp(k.total),
+          persentase: `${k.persentase}%`,
+          frekuensi: `${k.frekuensi} kali`,
+        })),
+        kontribusi_catat: rekap.dicatatOlehSummary,
       };
     }
 
@@ -630,24 +864,26 @@ const toolDeclarations = [
     functionDeclarations: [
       {
         name: "cek_kekurangan_bulan",
-        description: "Mengecek rekap rumah warga yang memiliki kekurangan bayar jimpitan pada bulan dan tahun tertentu. Gunakan ini jika user menanyakan rekap/daftar rumah yang belum bayar.",
+        description: "Mengecek rekap rumah warga yang memiliki kekurangan bayar jimpitan akumulasi dari awal tahun (Januari) sampai bulan yang diminta (sama persis dengan fitur 'Kekurangan Bayar per Tahun' dan tombol 'Salin tagihan WA'). Gunakan ini jika user menanyakan rekap/daftar rumah yang memiliki kekurangan atau belum bayar sampai bulan tertentu.",
         parameters: {
           type: "OBJECT",
           properties: {
-            bulan: { type: "INTEGER", description: "Bulan 1 sampai 12 (contoh: 11 untuk November)" },
-            tahun: { type: "INTEGER", description: "Tahun Masehi (contoh: 2026)" }
+            bulan: { type: "INTEGER", description: "Bulan akhir 1 sampai 12 yang dicek (contoh: 10 untuk Oktober jika ditanyakan 'sampai bulan Oktober', 11 untuk November)" },
+            tahun: { type: "INTEGER", description: "Tahun Masehi (contoh: 2026)" },
+            hanya_bulan_ini: { type: "BOOLEAN", description: "Set true HANYA JIKA user secara eksplisit meminta 'hanya bulan X saja'. Default false (menghitung akumulasi Januari s/d bulan tersebut)." }
           },
           required: ["bulan"]
         }
       },
       {
         name: "cek_tagihan_rumah",
-        description: "Mengecek rincian tagihan atau kekurangan bayar jimpitan untuk satu rumah tertentu.",
+        description: "Mengecek rincian tagihan atau kekurangan bayar jimpitan untuk satu rumah tertentu (termasuk jika ditanyakan sampai bulan tertentu).",
         parameters: {
           type: "OBJECT",
           properties: {
             nomor_rumah: { type: "STRING", description: "Nomor rumah warga (contoh: '20' atau '4')" },
-            tahun: { type: "INTEGER", description: "Tahun (opsional)" }
+            tahun: { type: "INTEGER", description: "Tahun (opsional)" },
+            sampai_bulan: { type: "INTEGER", description: "Batas bulan akhir 1 sampai 12 (opsional, misal 10 untuk Oktober jika ditanyakan s/d Oktober)" }
           },
           required: ["nomor_rumah"]
         }
@@ -726,6 +962,84 @@ const toolDeclarations = [
           type: "OBJECT",
           properties: {}
         }
+      },
+      {
+        name: "catat_pengeluaran_jimpitan",
+        description: "Mencatat satu atau lebih pengeluaran KAS JIMPITAN WARGA / POS RONDA / FASUM PERUMAHAN (contoh: beli minyak goreng pos ronda, kopi pos ronda, bola lampu jalan gang, baterai senter, sapu lidi, konsumsi kerja bakti, perlengkapan pos ronda, dll). HANYA digunakan untuk kas jimpitan warga dan hanya berwenang untuk Bendahara (Bapak Roni). JANGAN gunakan tool ini untuk belanja pribadi/keluarga.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            items: {
+              type: "ARRAY",
+              description: "Daftar pengeluaran kas jimpitan warga yang akan dicatat.",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  keterangan: { type: "STRING", description: "Uraian belanja jimpitan (contoh: 'Minyak goreng pos ronda', 'Bola lampu jalan gang')" },
+                  nominal: { type: "INTEGER", description: "Nominal uang dalam angka bulat Rupiah (contoh: 25000 untuk 25rb)" },
+                  penanggung_jawab: { type: "STRING", description: "Nama penanggung jawab pengeluaran (default: 'Bpk. Roni')" },
+                  tanggal: { type: "STRING", description: "Format YYYY-MM-DD. Kosongkan jika hari ini." }
+                },
+                required: ["keterangan", "nominal"]
+              }
+            }
+          },
+          required: ["items"]
+        }
+      },
+      {
+        name: "catat_keuangan_rumah",
+        description: "Mencatat satu atau lebih transaksi keuangan rumah tangga pribadi keluarga Pak Roni & Ibu Kartini (pengeluaran atau pemasukan belanja harian, tagihan listrik/air/wifi, kebutuhan rumah, beras/pangan, anak, bensin, dll). HANYA digunakan ketika user adalah Pak Roni atau Ibu Kartini dalam chat pribadi. AI dapat mem-parsing beberapa item sekaligus dalam satu kalimat (misal: 'catat beli galon 20rb, token listrik 100rb, beras 75rb').",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            items: {
+              type: "ARRAY",
+              description: "Daftar transaksi yang akan dicatat",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  keterangan: { type: "STRING", description: "Uraian belanja/transaksi (misal: 'Token listrik PLN', 'Beras 5kg', 'Galon air', 'Bensin motor')" },
+                  nominal: { type: "INTEGER", description: "Nominal uang dalam angka bulat Rupiah murni (misal: 20000 untuk 20rb/20k, 150000 untuk 150rb)" },
+                  kategori: {
+                    type: "STRING",
+                    description: "Kategori pengeluaran. Pilihan umum: 'Pangan / Dapur', 'Tagihan & Utilitas', 'Kebutuhan Rumah', 'Pendidikan & Anak', 'Transportasi & Bensin', 'Kesehatan', 'Jajan & Hiburan', 'Lain-lain'. Jika pemasukan, isi 'Pemasukan / Gaji / Usaha'."
+                  },
+                  jenis: {
+                    type: "STRING",
+                    description: "Jenis transaksi: 'pengeluaran' (default) atau 'pemasukan'."
+                  },
+                  sumber_dana: {
+                    type: "STRING",
+                    description: "Sumber pembayaran (misal: 'Cash', 'BCA', 'Mandiri', 'Gopay', dll). Default: 'Cash'."
+                  },
+                  tanggal: {
+                    type: "STRING",
+                    description: "Tanggal transaksi format YYYY-MM-DD. Kosongkan jika transaksi hari ini."
+                  }
+                },
+                required: ["keterangan", "nominal", "kategori"]
+              }
+            }
+          },
+          required: ["items"]
+        }
+      },
+      {
+        name: "rekap_keuangan_rumah",
+        description: "Melihat rekap dan analisis keuangan rumah tangga pribadi keluarga Pak Roni & Ibu Kartini (total pengeluaran, pemasukan, sisa saldo, breakdown per kategori, dan apa pengeluaran terbesar bulan ini). Gunakan ini jika Pak Roni atau Ibu Kartini bertanya tentang pengeluaran rumah tangga, rekap bulan ini, pengeluaran terbesar, atau total belanja kategori tertentu.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            bulan: { type: "INTEGER", description: "Bulan 1 sampai 12 (opsional, default: bulan saat ini)" },
+            tahun: { type: "INTEGER", description: "Tahun Masehi (opsional, default: tahun saat ini)" },
+            kategori: { type: "STRING", description: "Filter kategori spesifik jika ditanyakan (opsional)" },
+            pertanyaan_spesifik: {
+              type: "STRING",
+              description: "Fokus pertanyaan user (misal: 'pengeluaran_terbesar', 'total_belanja', 'ringkasan_umum', 'kategori_pangan')"
+            }
+          }
+        }
       }
     ]
   }
@@ -740,9 +1054,13 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
     return null;
   }
 
-  const rawSender = String(actualSenderJid || senderJid || "").split("@")[0].replace(/\D/g, "");
+  // Ambil nomor pengirim pesan yang sesungguhnya (buang domain dan ID perangkat multi-device :0, :2, dll)
+  const rawSender = extractPhoneNumber(actualSenderJid || senderJid);
+  const sessionKey = (senderJid && senderJid.endsWith("@g.us"))
+    ? senderJid
+    : (rawSender || senderJid);
 
-  // Periksa apakah pengirim memiliki draft rapel yang menunggu konfirmasi (Opsi 1)
+  // Periksa apakah pengirim memiliki draft setoran/rapel yang menunggu konfirmasi (Opsi 1)
   if (pendingConfirmations.has(rawSender)) {
     const pending = pendingConfirmations.get(rawSender);
     if (Date.now() - pending.timestamp > 5 * 60 * 1000) {
@@ -799,20 +1117,20 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
 
   // 1. Bersihkan memory jika sudah kadaluarsa
   const now = Date.now();
-  const lastActive = lastActivityMap.get(senderJid) || 0;
+  const lastActive = lastActivityMap.get(sessionKey) || 0;
   if (now - lastActive > MEMORY_TIMEOUT_MS) {
-    conversationMemory.delete(senderJid);
+    conversationMemory.delete(sessionKey);
   }
-  lastActivityMap.set(senderJid, now);
+  lastActivityMap.set(sessionKey, now);
 
   // 2. Deteksi profil warga dari nomor HP
   let senderInfo = null;
   try {
-    const rawNumber = String(senderJid || "").split("@")[0].replace(/\D/g, "");
+    const rawNumber = extractPhoneNumber(actualSenderJid || senderJid);
     if (rawNumber) {
       const searchSuffix = rawNumber.slice(-8); // 8 digit terakhir
       const wargaList = await ambilRefWarga();
-      const match = wargaList.find((w) => w.no_hp && String(w.no_hp).replace(/\D/g, "").includes(searchSuffix));
+      const match = wargaList.find((w) => w.no_hp && extractPhoneNumber(w.no_hp).includes(searchSuffix));
       if (match) {
         senderInfo = {
           nomor_rumah: match.nomor,
@@ -831,10 +1149,32 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
     identityContext = `\n[Info Pengirim]: Anda sedang berbicara dengan warga terdaftar yaitu ${senderInfo.nama} dari Rumah No. ${senderInfo.nomor_rumah}. Jika beliau bertanya 'tagihan saya', maksudnya adalah Rumah No. ${senderInfo.nomor_rumah}.`;
   }
 
+  const isAdminSender = isAuthorizedAdmin(actualSenderJid || senderJid);
+  if (isAdminSender) {
+    identityContext += `\n[Status Hak Akses]: Pengirim pesan ini terverifikasi adalah Bapak Roni Adiatmoko (Pengurus / Bendahara Jimpitan Resmi dengan nomor ${ADMIN_CONTACT_DISPLAY}). Beliau memiliki HAK AKSES PENUH untuk mencatat setoran uang ronda dan mencatat rapel jimpitan warga. Jangan pernah menolak perintah beliau untuk mencatat setoran ronda atau rapel warga.`;
+  }
+
+  const familyMember = getFamilyMember(actualSenderJid || senderJid);
+  const isPrivateChat = !senderJid || !senderJid.endsWith("@g.us");
+
+  if (familyMember.isFamily && isPrivateChat) {
+    if (familyMember.role === "Ibu Kartini") {
+      identityContext += `\n[Info Khusus Pengirim - Ibu Kartini]:
+- Pengirim pesan ini terverifikasi adalah Istri tercinta Bapak Roni Adiatmoko, yaitu *Ibu Kartini*.
+- Sapaan Wajib: Panggil beliau dengan namanya, yaitu *"Ibu Kartini"* atau *"Bu Kartini"*.
+- Persona & Sikap: Tunjukkan sikap yang sangat ramah, hangat, manis, santun, dan menyenangkan.
+- Pujian yang Menyenangkan: Anda SANGAT BOLEH dan DIANJURKAN memberikan pujian yang tulus dan manis yang membuat hati seorang wanita senang dan berbunga-bunga (contoh: memuji kecantikannya, anggun, rajin, teliti, cermat dan bijak dalam mengatur keuangan keluarga tercinta). Selingi dengan emoji manis seperti 🌸, ✨, 💖, 🥰, 😊.
+- Hak Akses: Beliau berhak penuh mencatat belanja/pengeluaran/pemasukan rumah tangga dan melihat rekap/pengeluaran terbesar. Catat transaksi atas nama "Ibu Kartini".`;
+    } else {
+      identityContext += `\n[Info Khusus Keluarga]: Pengirim pesan ini terverifikasi adalah ${familyMember.name} (${familyMember.role}). Beliau adalah kepala keluarga dan pemilik sah sistem pencatatan keuangan rumah tangga. Anda bertindak sebagai Asisten Keuangan Pribadi yang sigap, rapi, dan santun. Sapa beliau dengan panggilan hangat ('${familyMember.title}'). Jika beliau meminta mencatat pengeluaran/belanja rumah atau menanyakan rekap/pengeluaran terbesar, panggil tool yang sesuai.`;
+    }
+  }
+
   const nowObj = new Date();
   const hariArr = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-  const namaHariIni = hariArr[nowObj.getDay()];
-  const tglHariIni = nowObj.toISOString().split("T")[0];
+  const tglHariIni = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(nowObj);
+  const wibDayIdx = new Date(tglHariIni + "T12:00:00+07:00").getDay();
+  const namaHariIni = hariArr[wibDayIdx];
 
   const systemPrompt = `Nama Anda adalah Nara. Anda adalah Asisten Virtual Resmi Pengurus Jimpitan Perumahan Griya Bhina Karya Tempel 2.
 Perkenalkan diri Anda sebagai Nara dengan ramah, ceria, hangat, dan santun jika disapa, ditanya siapa Anda, atau saat memulai percakapan baru.
@@ -866,6 +1206,13 @@ Panduan Pencatatan Rapel Jimpitan:
   Lalu akhiri dengan kalimat: "Ketik *YA* untuk menyimpan ke sistem, atau *BATAL* untuk membatalkan."
 - Jika tool mengembalikan status 'SUDAH_LUNAS' atau 'UNAUTHORIZED' atau 'INVALID_NOMINAL', sampaikan pesan tersebut dengan ramah dan sopan.
 
+Panduan Rekap Kekurangan / Tagihan Warga:
+- Jika user menanyakan daftar kekurangan atau tagihan jimpitan (contoh: "daftar kekurangan sampai bulan oktober", "siapa saja yang belum bayar s/d oktober", "rekap tagihan"), panggil tool 'cek_kekurangan_bulan'.
+- Tool tersebut secara default menghitung AKUMULASI dari awal tahun (Januari) sampai bulan yang diminta (sama seperti fitur 'Kekurangan Bayar per Tahun' dan tombol 'Salin tagihan WA').
+- Tampilkan daftar rumah warga yang memiliki kekurangan sesuai hasil tool secara rapi:
+  • No. [nomor_rumah] - [nama] | [nominal] ([hari_kurang] hari)
+- Di akhir, sebutkan total rumah yang memiliki kekurangan dan total nominalnya.
+
 Panduan Setoran Ronda & Hitung Ulang:
 - Jika user menanyakan hari/tanggal ronda yang "belum disetor" atau uang ronda yang belum diserahkan ke bendahara, panggil tool 'cek_setoran_ronda'.
 - Jelaskan secara rapi daftar hari, tanggal, dan nominal yang belum disetorkan beserta total keseluruhannya.
@@ -879,6 +1226,52 @@ Panduan Waktu & Pertanyaan Relatif:
 - Contoh: Jika hari ini Selasa ${tglHariIni}, maka "senin kemarin" adalah 1 hari sebelumnya.
 - Jika user bertanya "laporan harian", "pendapatan jimpitan", atau "hasil ronda" tanpa menyebut tanggal, panggil tool 'cek_laporan_harian' tanpa tanggal agar sistem mengambil laporan terakhir.
 
+[PANDUAN KLASIFIKASI: MEMILAH PENGELUARAN JIMPITAN WARGA VS KEUANGAN RUMAH TANGGA]
+Bapak Roni Adiatmoko memegang DUA peran sekaligus: (1) Bendahara Kas Jimpitan Warga, dan (2) Kepala Keluarga Keuangan Rumah Tangga.
+Ketika ada chat pencatatan pengeluaran dari Pak Roni, Anda HARUS MEMILAH DENGAN SANGAT CERMAT ke mana pengeluaran tersebut dicatat:
+
+1. KELOMPOK PENGELUARAN KAS JIMPITAN WARGA (Tool: 'catat_pengeluaran_jimpitan'):
+   • Ruang Lingkup: Pengeluaran untuk fasilitas perumahan, pos ronda, kegiatan RT, kas jimpitan warga.
+   • Kata Kunci/Ciri Khas: "jimpitan", "kas jimpitan", "pos ronda", "ronda", "lampu jalan", "lampu gang", "kerja bakti", "rapat rt", "konsumsi ronda", "baterai senter", "sapu lidi pos", "warga", "fasum".
+   • KETENTUAN KHUSUS GRUP: Jika pesan dikirim di dalam GRUP WHATSAPP WARGA, otomatis HANYA BOLEH untuk Kas Jimpitan Warga!
+   • Action: Panggil tool 'catat_pengeluaran_jimpitan'.
+   • Respon WA: Wajib secara tegas dan eksplisit menyatakan bahwa transaksi dicatat ke *Pengeluaran Kas Jimpitan Warga*.
+
+2. KELOMPOK PENGELUARAN KEUANGAN RUMAH TANGGA (Tool: 'catat_keuangan_rumah'):
+   • Ruang Lingkup: Belanja dapur keluarga, kebutuhan rumah tangga pribadi, tagihan pribadi, anak, istri.
+   • Kata Kunci/Ciri Khas: "rumah", "dapur", "keluarga", "anak", "istri", "beras", "sayur", "lauk", "minyak dapur", "popok/pampers", "susu bayi/anak", "wifi rumah", "listrik rumah", "token listrik", "bensin motor/mobil", "jajan", "sekolah", "pribadi", atau jika pengirimnya adalah Ibu Kartini (istri Pak Roni).
+   • SYARAT KETAT: HANYA boleh di chat pribadi (JAPRI). Dilarang keras di grup warga.
+   • Action: Panggil tool 'catat_keuangan_rumah'.
+   • Respon WA: Wajib secara tegas dan eksplisit menyatakan bahwa transaksi dicatat ke *Keuangan Rumah Tangga*.
+
+3. KETENTUAN JIKA AMBIGU / TIDAK JELAS:
+   • Jika Pak Roni mengirim pengeluaran umum yang bermakna ganda tanpa konteks jelas di Japri (contoh: "Catat pengeluaran beli kopi 25rb", "Catat pengeluaran beli semen 1 sak 60rb", "Tadi keluar uang 50rb"):
+     JANGAN menebak atau berasumsi sendiri!
+     Tanyakan konfirmasi terlebih dahulu dengan ramah dan ringkas:
+     "Mohon konfirmasi Pak Roni, pengeluaran *[Item]* sebesar *Rp [Nominal]* ini ingin dicatat ke:
+     1️⃣ *Kas Jimpitan Warga (Pos Ronda)*
+     2️⃣ *Keuangan Rumah Tangga*
+     Silakan balas dengan angka *1* atau *2* ya Pak 🙏"
+   • Jika Pak Roni membalas "1" / "jimpitan" / "ronda", panggil tool 'catat_pengeluaran_jimpitan'.
+   • Jika Pak Roni membalas "2" / "rumah" / "pribadi", panggil tool 'catat_keuangan_rumah'.
+
+Panduan Khusus Keuangan Rumah Tangga Pribadi (HANYA Japri Pak Roni & Ibu Kartini):
+- Selain sebagai asisten jimpitan warga, Anda juga berperan sebagai Asisten Keuangan Keluarga khusus untuk Pak Roni dan Ibu Kartini HANYA di chat pribadi (Japri).
+- KETENTUAN KHUSUS SAPAAN & PERSONA UNTUK IBU KARTINI:
+  • Jika pengirim pesan adalah Ibu Kartini:
+    - Selalu sebut nama beliau secara jelas dan santun: *"Ibu Kartini"* atau *"Bu Kartini"*.
+    - Boleh dan sangat disarankan memberikan pujian tulus nan manis yang membuat wanita/ibu rumah tangga senang dan tersenyum (misal: memuji beliau cantik, anggun, cermat, bijak dan telaten dalam mengatur belanja keluarga, atau istri sholehah/hebat kebanggaan keluarga).
+    - Hiasi dengan emoji manis seperti 🌸, ✨, 💖, 🥰, 😊.
+- Jika Pak Roni atau Ibu Kartini mencatat belanja atau pengeluaran rumah (contoh: "catat beli beras 75rb, sabun 15rb", "tadi bayar tagihan wifi 300rb", "beli token listrik 100k, galon 20k"):
+  • Pecah menjadi item terpisah jika ada beberapa transaksi dalam satu pesan.
+  • Pilihkan kategori yang paling tepat secara cerdas ('Pangan / Dapur', 'Tagihan & Utilitas', 'Kebutuhan Rumah', 'Transportasi & Bensin', 'Pendidikan & Anak', 'Kesehatan', 'Jajan & Hiburan').
+  • Panggil tool 'catat_keuangan_rumah'.
+  • Sampaikan konfirmasi penyimpanan dengan rapi, rincian per item, total nominal, dan sapaan santun (serta pujian manis untuk Ibu Kartini).
+- Jika Pak Roni atau Ibu Kartini bertanya rekap keuangan (contoh: "pengeluaran terbesar bulan ini apa?", "rekap pengeluaran bulan ini", "bulan ini sudah habis berapa?"):
+  • Panggil tool 'rekap_keuangan_rumah'.
+  • Jawab pertanyaan user secara terfokus dan cerdas. Misalnya jika ditanyakan pengeluaran terbesar: sebutkan dengan jelas apa kategori terbesarnya (nominal dan persentasenya) serta daftar 1-3 transaksi satuan yang paling besar nilainya di bulan tersebut.
+- Fitur keuangan rumah tangga SAMA SEKALI TIDAK BOLEH dibahas di dalam grup RT warga.
+
 Aturan Penulisan Pesan WhatsApp:
 - Gunakan *bold* pada nominal uang, nomor rumah, dan kata penting.
 - Gunakan bullet point (•) untuk daftar rincian agar mudah dibaca di layar HP.
@@ -887,7 +1280,7 @@ Aturan Penulisan Pesan WhatsApp:
 - Jika menampilkan daftar kekurangan banyak rumah, tampilkan nomor rumah, nama, dan nominalnya secara rapi.`;
 
   // 4. Siapkan riwayat percakapan
-  let history = conversationMemory.get(senderJid) || [];
+  let history = conversationMemory.get(sessionKey) || [];
   history.push({
     role: "user",
     parts: [{ text: pesanTeks }]
@@ -972,7 +1365,7 @@ Aturan Penulisan Pesan WhatsApp:
           role: "model",
           parts: [{ text: replyText }]
         });
-        conversationMemory.set(senderJid, history);
+        conversationMemory.set(sessionKey, history);
         return replyText;
       }
     } else {
@@ -984,7 +1377,7 @@ Aturan Penulisan Pesan WhatsApp:
           role: "model",
           parts: [{ text: replyText }]
         });
-        conversationMemory.set(senderJid, history);
+        conversationMemory.set(sessionKey, history);
         return replyText;
       }
     }

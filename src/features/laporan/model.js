@@ -12,11 +12,11 @@ async function getHitungKekurangan(period) {
   const nextMonthStr = String(nextMonth).padStart(2, "0");
   const nextMonthStart = `${nextMonthYear}-${nextMonthStr}-01`;
 
-  // Dapatkan batas akhir tanggal aktif transaksi / hari ini
-  // Tanggal di masa depan (yang belum tiba) tidak dihitung sebagai kekurangan
+  // Batas akhir penagihan adalah tanggal ronda terakhir yang sudah diinput petugas (maksimal hari ini).
+  // Jika hari ini petugas ronda belum menginput data, maka hari ini belum dihitung sebagai kekurangan.
   const maxRow = await get("SELECT MAX(tanggal) as max_tgl FROM jimpitan WHERE jumlah > 0");
-  const todayStr = new Date().toISOString().substring(0, 10);
-  const maxDate = maxRow?.max_tgl && maxRow.max_tgl > todayStr ? maxRow.max_tgl : todayStr;
+  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
+  const maxDate = maxRow?.max_tgl ? (maxRow.max_tgl > todayStr ? todayStr : maxRow.max_tgl) : todayStr;
 
   const sql = `
   WITH RECURSIVE all_days(d) AS (
@@ -91,10 +91,11 @@ async function getHitungKekuranganTahun(year) {
   const start = `${yStr}-01-01`;
   const nextYearStart = `${Number(yStr) + 1}-01-01`;
 
-  // Dapatkan batas akhir tanggal aktif transaksi / hari ini
+  // Batas akhir penagihan adalah tanggal ronda terakhir yang sudah diinput petugas (maksimal hari ini).
+  // Jika hari ini petugas ronda belum menginput data, maka hari ini belum dihitung sebagai kekurangan.
   const maxRow = await get("SELECT MAX(tanggal) as max_tgl FROM jimpitan WHERE jumlah > 0");
-  const todayStr = new Date().toISOString().substring(0, 10);
-  const maxDate = maxRow?.max_tgl && maxRow.max_tgl > todayStr ? maxRow.max_tgl : todayStr;
+  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
+  const maxDate = maxRow?.max_tgl ? (maxRow.max_tgl > todayStr ? todayStr : maxRow.max_tgl) : todayStr;
 
   const sql = `
   WITH RECURSIVE all_days(d) AS (

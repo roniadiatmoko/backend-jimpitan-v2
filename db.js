@@ -5,9 +5,13 @@ const db = new sqlite3.Database("./db.sqlite");
 const { format, lastDayOfMonth } = require("date-fns");
 const { id } = require("date-fns/locale");
 const { enqueueMirror, withTransaction } = require("./src/utils/postgresMirror");
+const { initUserTable } = require("./src/features/auth/userModel");
 
 // Buat tabel jika belum ada
 db.serialize(() => {
+  // table users (manajemen akun admin & ketua)
+  initUserTable(db).catch((e) => console.warn("[DB] initUserTable warning:", e.message));
+
   //table jimpitan
   db.run(`
     CREATE TABLE IF NOT EXISTS jimpitan (
@@ -61,7 +65,20 @@ db.serialize(() => {
       waktu_input TEXT DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(tanggal, nomor_rumah)
     )
-    `)
+  `);
+
+  //table jadwal petugas ronda mingguan
+  db.run(`
+    CREATE TABLE IF NOT EXISTS jadwal_petugas_ronda (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      hari TEXT NOT NULL,
+      nomor_rumah TEXT NOT NULL,
+      nama_penghuni TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(hari, nomor_rumah)
+    )
+  `);
+  db.run("CREATE INDEX IF NOT EXISTS idx_jadwal_ronda_hari ON jadwal_petugas_ronda(hari)");
 
   //table tanggal pemutihan
   db.run(`
@@ -109,6 +126,23 @@ db.serialize(() => {
     "ALTER TABLE rekap ADD COLUMN is_kunci_sinkron INTEGER DEFAULT 0",
     () => {},
   );
+
+  // Table keuangan rumah tangga pribadi (terpisah dari kas warga)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS keuangan_rumah (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tanggal TEXT,
+      jenis TEXT DEFAULT 'pengeluaran',
+      kategori TEXT,
+      nominal INTEGER,
+      keterangan TEXT,
+      sumber_dana TEXT DEFAULT 'Cash',
+      dicatat_oleh TEXT,
+      created_at TEXT
+    )
+  `);
+  db.run("CREATE INDEX IF NOT EXISTS idx_keuangan_rumah_tgl ON keuangan_rumah(tanggal)");
+  db.run("CREATE INDEX IF NOT EXISTS idx_keuangan_rumah_kategori ON keuangan_rumah(kategori)");
 });
 
 // FUNGSI UTAMA: Hapus data untuk tanggal tertentu, lalu masukkan data baru
@@ -431,11 +465,15 @@ function ambilJimpitanPerBulan(bulan) {
   });
 }
 
-//ambil pengeluaran yyyy-mm
+//ambil pengeluaran yyyy-mm atau yyyy
 function ambilPengeluaran(bulan){
   return new Promise((resolve, reject) => {
+    const isYear = String(bulan).length === 4;
+    const query = isYear
+      ? "SELECT * from pengeluaran WHERE SUBSTR(tanggal, 1, 4) = ? ORDER BY tanggal ASC"
+      : "SELECT * from pengeluaran WHERE SUBSTR(tanggal, 1, 7) = ? ORDER BY tanggal ASC";
     db.all(
-      "SELECT * from pengeluaran WHERE SUBSTR(tanggal, 1, 7) = ? ORDER BY tanggal ASC",
+      query,
       [bulan],
       (err, rows) => {
         if (err) reject(err);

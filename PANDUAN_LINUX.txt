@@ -1,0 +1,53 @@
+===================================================================
+ PANDUAN MENJALANKAN & UPDATE JIMPITAN DI LAPTOP LINUX MINT
+===================================================================
+
+-------------------------------------------------------------------
+ CARA UPDATE DARI GITHUB (JALANKAN DI TERMINAL LINUX MINT):
+-------------------------------------------------------------------
+cd ~/jimpitan/backend && git pull origin main
+cd ~/jimpitan/frontend && git pull origin main && npm run build
+
+Setelah itu restart service:
+- Jika memakai service systemd:
+  sudo systemctl restart jimpitan-backend jimpitan-frontend
+- Jika manual:
+  cd ~/jimpitan && bash jalankan-di-linux.sh
+
+*Catatan: Setelah perintah di atas dijalankan sekali, untuk update-update
+berikutnya di masa depan cukup klik menu "Update Aplikasi" di Web Admin.*
+-------------------------------------------------------------------
+
+
+Cara 1: Sekali Klik (Paling Mudah Saat Pertama Setup dari Flashdisk)
+-------------------------------------------------------------------
+1. Colokkan Flashdisk/HDD eksternal ini ke laptop Linux Mint.
+2. Buka folder "jimpitan".
+3. Klik kanan pada file "jalankan-di-linux.sh" -> Properties -> tab "Permissions".
+   Pastikan opsi "Allow executing file as program" dicentang.
+4. Klik 2x pada "jalankan-di-linux.sh" dan pilih "Run in Terminal".
+   (Atau klik 2x pada ikon "Jalankan Jimpitan.desktop").
+5. Script akan otomatis:
+   - Menyalin backend & frontend ke HDD laptop (~/jimpitan).
+   - Memeriksa Node.js (jika belum ada atau masih versi < 20, script otomatis menambahkan repositori resmi NodeSource 20.x dan menginstallnya).
+   - Mengunduh cloudflared jika belum ada.
+   - Menjalankan Backend (3000), Frontend (3001), dan Tunnel Cloudflare.
+   - Membuka browser ke https://jimpitan-gbk.roniadiatmoko.my.id.
+
+Cara 2: Lewat Terminal
+----------------------
+Buka Terminal di Linux Mint, lalu ketik:
+   cd /media/$USER/*/jimpitan
+   bash jalankan-di-linux.sh
+
+Cara 3: Otomatis Jalan Setiap Laptop Dinyalakan (Opsional)
+---------------------------------------------------------
+Jika laptop difungsikan sebagai mini-server rumahan:
+Setelah menjalankan Cara 1 atau 2 sekali, Anda bisa pasang service otomatis:
+   cd ~/jimpitan
+   bash install-service-otomatis.sh
+Maka setiap kali laptop dinyalakan, server jimpitan & tunnel langsung online!
+
+Catatan:
+- Pastikan mematikan cloudflared di laptop Windows lama sebelum menyalakan di Linux Mint.
+===================================================================

@@ -12,10 +12,14 @@ const hariList = [
 function buildLaporanHarianText(tanggal, laporanData, presensiRonda, footer, saldoInfo) {
   const namaHari = hariList[new Date(tanggal).getDay()];
 
-  let personilRonda = "Penanggung Jawab Ronda:\n";
-  personilRonda += presensiRonda
-    .map((item, idx) => `${idx + 1}. ${item.nomor_rumah} - ${item.nama_penghuni}`)
-    .join("\n");
+  let personilRonda = "*Penanggung Jawab Ronda:*\n";
+  if (!presensiRonda || presensiRonda.length === 0) {
+    personilRonda += "-\n";
+  } else {
+    personilRonda += presensiRonda
+      .map((item, idx) => `${idx + 1}. No. ${item.nomor_rumah} - ${item.nama_penghuni}`)
+      .join("\n") + "\n";
+  }
 
   let laporanText = `*Laporan Jimpitan Harian*\n\n`;
   laporanText += `Tanggal: ${namaHari}, ${tanggal}\n\n`;

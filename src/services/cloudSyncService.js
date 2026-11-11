@@ -47,7 +47,7 @@ function getPgPool() {
       "Kredensial PostgreSQL belum lengkap di .env (PGHOST, PGUSER, PGPASSWORD, PGDATABASE)",
     );
   }
-  return new Pool({
+  const pool = new Pool({
     host: process.env.PGHOST,
     port: Number(process.env.PGPORT || 5432),
     user: process.env.PGUSER,
@@ -56,6 +56,329 @@ function getPgPool() {
     ssl: { rejectUnauthorized: false },
     connectionTimeoutMillis: 35000,
   });
+  pool.on("error", (err) => {
+    console.warn("[cloudSyncService] PG pool background error:", err.message);
+  });
+  return pool;
+}
+
+/**
+ * Daftar tabel tersinkronisasi lengkap dengan skema pembuatan otomatis (CREATE TABLE IF NOT EXISTS) di PostgreSQL Cloud.
+ * Jika tabel belum ada di cloud saat proses sinkronisasi berjalan, sistem akan membuatnya secara otomatis.
+ */
+const SYNC_TABLES = [
+  {
+    name: "ref_warga",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "ref_warga" (
+        nomor INTEGER PRIMARY KEY,
+        nama TEXT,
+        sudah_menghuni INTEGER,
+        tanggal_huni DATE,
+        no_hp TEXT
+      );
+    `,
+    columns: ["nomor", "nama", "sudah_menghuni", "tanggal_huni", "no_hp"],
+    transform: (row) => ({
+      ...row,
+      tanggal_huni:
+        row.tanggal_huni instanceof Date
+          ? row.tanggal_huni.toISOString().split("T")[0]
+          : row.tanggal_huni,
+    }),
+  },
+  {
+    name: "tanggal_pemutihan",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "tanggal_pemutihan" (
+        id SERIAL PRIMARY KEY,
+        tanggal VARCHAR(50),
+        keterangan TEXT,
+        created_at VARCHAR(100)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_tanggal_pemutihan_tanggal ON "tanggal_pemutihan"(tanggal);
+    `,
+    columns: ["id", "tanggal", "keterangan", "created_at"],
+    transform: (row) => ({
+      ...row,
+      created_at: formatVal(row.created_at),
+    }),
+  },
+  {
+    name: "hitung_ulang_jimpitan_harian",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "hitung_ulang_jimpitan_harian" (
+        tanggal VARCHAR(50) PRIMARY KEY,
+        nominal_hitung_ulang VARCHAR(100),
+        created_at VARCHAR(100)
+      );
+    `,
+    columns: ["tanggal", "nominal_hitung_ulang", "created_at"],
+    transform: (row) => ({
+      ...row,
+      created_at: formatVal(row.created_at),
+    }),
+  },
+  {
+    name: "pengeluaran",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "pengeluaran" (
+        id SERIAL PRIMARY KEY,
+        tanggal VARCHAR(50),
+        nominal VARCHAR(100),
+        penanggung_jawab VARCHAR(255),
+        keterangan TEXT,
+        bukti_foto TEXT,
+        created_at VARCHAR(100)
+      );
+    `,
+    columns: [
+      "id",
+      "tanggal",
+      "nominal",
+      "penanggung_jawab",
+      "keterangan",
+      "bukti_foto",
+      "created_at",
+    ],
+    transform: (row) => ({
+      ...row,
+      tanggal: formatVal(row.tanggal),
+      created_at: formatVal(row.created_at),
+    }),
+  },
+  {
+    name: "presensi_ronda",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "presensi_ronda" (
+        id SERIAL PRIMARY KEY,
+        tanggal VARCHAR(50),
+        nomor_rumah VARCHAR(50),
+        nama_penghuni VARCHAR(255),
+        waktu_input VARCHAR(100)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_presensi_ronda_unique ON "presensi_ronda"(tanggal, nomor_rumah);
+    `,
+    columns: ["id", "tanggal", "nomor_rumah", "nama_penghuni", "waktu_input"],
+    transform: (row) => ({
+      ...row,
+      waktu_input: formatVal(row.waktu_input),
+    }),
+  },
+  {
+    name: "rapel",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "rapel" (
+        id SERIAL PRIMARY KEY,
+        nomor_rumah VARCHAR(50),
+        tanggal VARCHAR(50)
+      );
+    `,
+    columns: ["id", "nomor_rumah", "tanggal"],
+    transform: (row) => row,
+  },
+  {
+    name: "rekap",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "rekap" (
+        id SERIAL PRIMARY KEY,
+        bulan VARCHAR(20),
+        tahun VARCHAR(10),
+        saldo_sebelumnya NUMERIC,
+        pemasukan NUMERIC,
+        pengeluaran NUMERIC,
+        sisa_saldo NUMERIC,
+        keterangan TEXT,
+        is_kunci_sinkron INTEGER DEFAULT 0
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_rekap_periode ON "rekap"(bulan, tahun);
+    `,
+    columns: [
+      "id",
+      "bulan",
+      "tahun",
+      "saldo_sebelumnya",
+      "pemasukan",
+      "pengeluaran",
+      "sisa_saldo",
+      "keterangan",
+      "is_kunci_sinkron",
+    ],
+    transform: (row) => row,
+  },
+  {
+    name: "jimpitan",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "jimpitan" (
+        id SERIAL PRIMARY KEY,
+        tanggal VARCHAR(50),
+        nomor_rumah VARCHAR(50),
+        nama_pengisi VARCHAR(255),
+        jumlah BIGINT,
+        diambil_oleh VARCHAR(255),
+        waktu_input VARCHAR(100)
+      );
+    `,
+    columns: [
+      "id",
+      "tanggal",
+      "nomor_rumah",
+      "nama_pengisi",
+      "jumlah",
+      "diambil_oleh",
+      "waktu_input",
+    ],
+    transform: (row) => ({
+      ...row,
+      waktu_input: formatVal(row.waktu_input),
+    }),
+  },
+  {
+    name: "keuangan_rumah",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "keuangan_rumah" (
+        id SERIAL PRIMARY KEY,
+        tanggal VARCHAR(50),
+        jenis VARCHAR(20) DEFAULT 'pengeluaran',
+        kategori VARCHAR(100),
+        nominal BIGINT,
+        keterangan TEXT,
+        sumber_dana VARCHAR(50) DEFAULT 'Cash',
+        dicatat_oleh VARCHAR(50),
+        created_at VARCHAR(100)
+      );
+      CREATE INDEX IF NOT EXISTS idx_keuangan_rumah_tgl ON "keuangan_rumah"(tanggal);
+      CREATE INDEX IF NOT EXISTS idx_keuangan_rumah_kategori ON "keuangan_rumah"(kategori);
+    `,
+    columns: [
+      "id",
+      "tanggal",
+      "jenis",
+      "kategori",
+      "nominal",
+      "keterangan",
+      "sumber_dana",
+      "dicatat_oleh",
+      "created_at",
+    ],
+    transform: (row) => ({
+      ...row,
+      tanggal:
+        row.tanggal instanceof Date
+          ? row.tanggal.toISOString().split("T")[0]
+          : row.tanggal,
+      created_at: formatVal(row.created_at),
+    }),
+  },
+  {
+    name: "users",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "users" (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(100) UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        fullname VARCHAR(200),
+        role VARCHAR(50) DEFAULT 'admin',
+        created_at VARCHAR(100),
+        updated_at VARCHAR(100)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON "users"(username);
+    `,
+    columns: [
+      "id",
+      "username",
+      "password_hash",
+      "fullname",
+      "role",
+      "created_at",
+      "updated_at",
+    ],
+    transform: (row) => ({
+      ...row,
+      created_at: formatVal(row.created_at),
+      updated_at: formatVal(row.updated_at),
+    }),
+  },
+  {
+    name: "jadwal_petugas_ronda",
+    createSql: `
+      CREATE TABLE IF NOT EXISTS "jadwal_petugas_ronda" (
+        id SERIAL PRIMARY KEY,
+        hari VARCHAR(20) NOT NULL,
+        nomor_rumah VARCHAR(50) NOT NULL,
+        nama_penghuni VARCHAR(255),
+        created_at VARCHAR(100) DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(hari, nomor_rumah)
+      );
+      CREATE INDEX IF NOT EXISTS idx_jadwal_ronda_hari ON "jadwal_petugas_ronda"(hari);
+    `,
+    columns: ["id", "hari", "nomor_rumah", "nama_penghuni", "created_at"],
+    transform: (row) => ({
+      ...row,
+      created_at: formatVal(row.created_at),
+    }),
+  },
+];
+
+/**
+ * Eksekutor query multi-statement untuk PostgreSQL
+ */
+async function executeSqlStatements(pgClient, sqlText) {
+  if (!sqlText) return;
+  const statements = sqlText
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  for (const stmt of statements) {
+    try {
+      await pgClient.query(stmt);
+    } catch (stmtErr) {
+      // Abaikan duplicate index atau info benign, laporkan error penting
+      if (!/already exists/i.test(stmtErr.message)) {
+        console.warn(`[cloudSyncService] Perhatian saat eksekusi DDL Cloud: ${stmtErr.message}`);
+      }
+    }
+  }
+}
+
+/**
+ * Otomatis memastikan seluruh tabel yang ada di aplikasi lokal dibuatkan di Cloud PostgreSQL jika belum ada.
+ */
+async function ensureCloudTablesExist(pgClient) {
+  for (const t of SYNC_TABLES) {
+    if (t.createSql) {
+      await executeSqlStatements(pgClient, t.createSql);
+    }
+  }
+}
+
+/**
+ * Insert data dalam batch / chunk untuk performa tinggi dan menghindari koneksi timeout
+ */
+async function batchInsertPg(pgClient, tableName, columns, rows, batchSize = 250) {
+  if (!rows || rows.length === 0) return;
+
+  const colList = columns.map((c) => `"${c}"`).join(", ");
+
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const chunk = rows.slice(i, i + batchSize);
+    const valuePlaceholders = [];
+    const flatValues = [];
+
+    chunk.forEach((row, rowIdx) => {
+      const rowPlaceholders = [];
+      columns.forEach((col, colIdx) => {
+        const paramIndex = rowIdx * columns.length + colIdx + 1;
+        rowPlaceholders.push(`$${paramIndex}`);
+        flatValues.push(row[col] ?? null);
+      });
+      valuePlaceholders.push(`(${rowPlaceholders.join(", ")})`);
+    });
+
+    const insertSql = `INSERT INTO "${tableName}" (${colList}) VALUES ${valuePlaceholders.join(", ")}`;
+    await pgClient.query(insertSql, flatValues);
+  }
 }
 
 /**
@@ -72,6 +395,12 @@ async function getPreviewStatus() {
     sqlite = getSqliteDb();
 
     pgClient = await pool.connect();
+    pgClient.on("error", (err) => {
+      console.warn("[cloudSyncService] PG preview client warning:", err.message);
+    });
+
+    // 0. Pastikan semua tabel di Cloud sudah ada sehingga query tidak error jika ada tabel baru
+    await ensureCloudTablesExist(pgClient);
 
     // 1. Query Cloud PostgreSQL
     const pgJimpitan = await pgClient.query(
@@ -164,8 +493,8 @@ async function getPreviewStatus() {
     if (daysAhead > 0 || (localMaxTanggal && cloudMaxTanggal && localMaxTanggal > cloudMaxTanggal)) {
       status = "AHEAD";
       isLocalAhead = true;
-      canPull = true; // Tetap diperbolehkan menarik data (untuk membersihkan data uji coba lokal setelah konfirmasi)
-      canPush = true; // Tombol push tetap disediakan untuk jaga-jaga jika data lokal adalah data asli
+      canPull = true;
+      canPush = true;
       message = `Database lokal lebih baru dibanding Cloud (${daysAhead} hari). Tarik dari Cloud untuk membersihkan sisa data uji coba, atau Unggah ke Cloud jika data lokal adalah data ronda asli.`;
     } else if (daysBehind > 0 || (cloudMaxTanggal && localMaxTanggal && cloudMaxTanggal > localMaxTanggal)) {
       status = "BEHIND";
@@ -236,98 +565,6 @@ async function executeFullPull(force = false) {
   let pool;
   let pgClient;
   let sqlite;
-
-  const tables = [
-    {
-      name: "ref_warga",
-      columns: ["nomor", "nama", "sudah_menghuni", "tanggal_huni", "no_hp"],
-      transform: (row) => ({
-        ...row,
-        tanggal_huni:
-          row.tanggal_huni instanceof Date
-            ? row.tanggal_huni.toISOString().split("T")[0]
-            : row.tanggal_huni,
-      }),
-    },
-    {
-      name: "tanggal_pemutihan",
-      columns: ["id", "tanggal", "keterangan", "created_at"],
-      transform: (row) => ({
-        ...row,
-        created_at: formatVal(row.created_at),
-      }),
-    },
-    {
-      name: "hitung_ulang_jimpitan_harian",
-      columns: ["tanggal", "nominal_hitung_ulang", "created_at"],
-      transform: (row) => ({
-        ...row,
-        created_at: formatVal(row.created_at),
-      }),
-    },
-    {
-      name: "pengeluaran",
-      columns: [
-        "id",
-        "tanggal",
-        "nominal",
-        "penanggung_jawab",
-        "keterangan",
-        "bukti_foto",
-        "created_at",
-      ],
-      transform: (row) => ({
-        ...row,
-        tanggal: formatVal(row.tanggal),
-        created_at: formatVal(row.created_at),
-      }),
-    },
-    {
-      name: "presensi_ronda",
-      columns: ["id", "tanggal", "nomor_rumah", "nama_penghuni", "waktu_input"],
-      transform: (row) => ({
-        ...row,
-        waktu_input: formatVal(row.waktu_input),
-      }),
-    },
-    {
-      name: "rapel",
-      columns: ["id", "nomor_rumah", "tanggal"],
-      transform: (row) => row,
-    },
-    {
-      name: "rekap",
-      columns: [
-        "id",
-        "bulan",
-        "tahun",
-        "saldo_sebelumnya",
-        "pemasukan",
-        "pengeluaran",
-        "sisa_saldo",
-        "keterangan",
-        "is_kunci_sinkron",
-      ],
-      transform: (row) => row,
-    },
-    {
-      name: "jimpitan",
-      columns: [
-        "id",
-        "tanggal",
-        "nomor_rumah",
-        "nama_pengisi",
-        "jumlah",
-        "diambil_oleh",
-        "waktu_input",
-      ],
-      transform: (row) => ({
-        ...row,
-        waktu_input: formatVal(row.waktu_input),
-      }),
-    },
-  ];
-
   const migratedSummary = {};
 
   try {
@@ -336,9 +573,15 @@ async function executeFullPull(force = false) {
 
     console.log("[cloudSyncService] Connecting to PostgreSQL for full pull...");
     pgClient = await pool.connect();
+    pgClient.on("error", (err) => {
+      console.warn("[cloudSyncService] PG pull client warning:", err.message);
+    });
     console.log("[cloudSyncService] PostgreSQL connected!");
 
-    for (const t of tables) {
+    // Otomatis pastikan semua tabel sudah terbuat di Cloud
+    await ensureCloudTablesExist(pgClient);
+
+    for (const t of SYNC_TABLES) {
       console.log(`[cloudSyncService] Migrating table: ${t.name}...`);
       const pgRes = await pgClient.query(`SELECT * FROM "${t.name}"`);
 
@@ -411,68 +654,6 @@ async function executeFullPush() {
   let pool;
   let pgClient;
   let sqlite;
-
-  const tables = [
-    {
-      name: "ref_warga",
-      columns: ["nomor", "nama", "sudah_menghuni", "tanggal_huni", "no_hp"],
-    },
-    {
-      name: "tanggal_pemutihan",
-      columns: ["id", "tanggal", "keterangan", "created_at"],
-    },
-    {
-      name: "hitung_ulang_jimpitan_harian",
-      columns: ["tanggal", "nominal_hitung_ulang", "created_at"],
-    },
-    {
-      name: "pengeluaran",
-      columns: [
-        "id",
-        "tanggal",
-        "nominal",
-        "penanggung_jawab",
-        "keterangan",
-        "bukti_foto",
-        "created_at",
-      ],
-    },
-    {
-      name: "presensi_ronda",
-      columns: ["id", "tanggal", "nomor_rumah", "nama_penghuni", "waktu_input"],
-    },
-    {
-      name: "rapel",
-      columns: ["id", "nomor_rumah", "tanggal"],
-    },
-    {
-      name: "rekap",
-      columns: [
-        "id",
-        "bulan",
-        "tahun",
-        "saldo_sebelumnya",
-        "pemasukan",
-        "pengeluaran",
-        "sisa_saldo",
-        "keterangan",
-        "is_kunci_sinkron",
-      ],
-    },
-    {
-      name: "jimpitan",
-      columns: [
-        "id",
-        "tanggal",
-        "nomor_rumah",
-        "nama_pengisi",
-        "jumlah",
-        "diambil_oleh",
-        "waktu_input",
-      ],
-    },
-  ];
-
   const pushedSummary = {};
 
   try {
@@ -481,11 +662,17 @@ async function executeFullPush() {
 
     console.log("[cloudSyncService] Menghubungkan ke PostgreSQL untuk full push...");
     pgClient = await pool.connect();
+    pgClient.on("error", (err) => {
+      console.warn("[cloudSyncService] PG push client warning:", err.message);
+    });
     console.log("[cloudSyncService] PostgreSQL connected!");
+
+    // Otomatis pastikan semua tabel sudah terbuat di Cloud PostgreSQL
+    await ensureCloudTablesExist(pgClient);
 
     await pgClient.query("BEGIN");
 
-    for (const t of tables) {
+    for (const t of SYNC_TABLES) {
       console.log(`[cloudSyncService] Mengunggah tabel ${t.name} ke Cloud...`);
       const sqliteRows = await new Promise((res, rej) => {
         sqlite.all(`SELECT * FROM "${t.name}"`, [], (err, rows) => {
@@ -498,13 +685,20 @@ async function executeFullPush() {
       await pgClient.query(`DELETE FROM "${t.name}"`);
 
       if (sqliteRows.length > 0) {
-        const colList = t.columns.map((c) => `"${c}"`).join(", ");
-        const placeholders = t.columns.map((_, idx) => `$${idx + 1}`).join(", ");
-        const insertSql = `INSERT INTO "${t.name}" (${colList}) VALUES (${placeholders})`;
+        const rowsToInsert = t.transformPush
+          ? sqliteRows.map((r) => t.transformPush(r))
+          : sqliteRows;
+        await batchInsertPg(pgClient, t.name, t.columns, rowsToInsert, 250);
 
-        for (const row of sqliteRows) {
-          const values = t.columns.map((c) => row[c] ?? null);
-          await pgClient.query(insertSql, values);
+        // Sinkronkan sequence ID untuk tabel yang memiliki serial sequence
+        if (t.columns.includes("id")) {
+          try {
+            await pgClient.query(
+              `SELECT setval(pg_get_serial_sequence('"${t.name}"', 'id'), COALESCE((SELECT MAX(id) FROM "${t.name}"), 1))`
+            );
+          } catch (seqErr) {
+            // Sequence mungkin tidak ada jika bukan SERIAL PK
+          }
         }
       }
 
@@ -618,6 +812,8 @@ async function switchAppMode(targetMode, pullFirst = true) {
 }
 
 module.exports = {
+  SYNC_TABLES,
+  ensureCloudTablesExist,
   getPreviewStatus,
   executeFullPull,
   executeFullPush,

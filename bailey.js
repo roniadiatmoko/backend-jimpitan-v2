@@ -408,8 +408,6 @@ async function resendLaporanWhatsApp(tanggal) {
       );
     }
 
-    let personilRonda = "Penanggung Jawab Ronda:\n";
-
     const laporanData = await ambilLaporanHarian(tanggal);
     if (!laporanData || laporanData.laporan.length === 0) {
       console.log(`Tidak ada data jimpitan untuk tanggal ${tanggal}.`);

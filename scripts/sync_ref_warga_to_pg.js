@@ -6,11 +6,15 @@ const path = require('path');
 const DB_PATH = path.resolve(__dirname, '../db.sqlite');
 const sqlite = new sqlite3.Database(DB_PATH);
 
-const PGHOST = process.env.PGHOST || "jimpitan-made-river.sage.cloud.layerbase.dev";
+const PGHOST = process.env.PGHOST;
 const PGPORT = Number(process.env.PGPORT || 5432);
-const PGUSER = process.env.PGUSER || "layerbase";
-const PGPASSWORD = process.env.PGPASSWORD || "xGSCAhaG6kQtq5P8na3HbS04";
-const PGDATABASE = process.env.PGDATABASE || "jimpitan";
+const PGUSER = process.env.PGUSER;
+const PGPASSWORD = process.env.PGPASSWORD;
+const PGDATABASE = process.env.PGDATABASE;
+
+if (!PGHOST || !PGUSER || !PGPASSWORD || !PGDATABASE) {
+  throw new Error("Kredensial PostgreSQL belum lengkap di .env");
+}
 
 const pool = new Pool({
   host: PGHOST,

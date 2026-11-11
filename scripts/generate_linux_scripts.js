@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
-const TOKEN = "eyJhIjoiNDQ2YjdjZjA4MmQ2ODFmZjM4ZTNjNTM1ZjM2MzFmOTEiLCJ0IjoiNDg3NjhmYmEtNjYwMy00ODkzLTg4MTctYzRlYTc5ZWQyMmM3IiwicyI6Ik9HWm1OVGhsTXpJdFltRTVOeTAwTURNMkxUazROMlF0T1Rnd01XWmtZMlUzWkdNeSJ9";
+const TOKEN = process.env.CLOUDFLARE_TUNNEL_TOKEN || "";
 
 // ==========================================
 // 1. SCRIPT jalankan-di-linux.sh (LF Line Endings)
@@ -332,10 +333,17 @@ Catatan:
 ===================================================================
 `;
 
-// Tulis semua file ke folder e:/jimpitan/
-fs.writeFileSync('e:/jimpitan/jalankan-di-linux.sh', bashScript, { encoding: 'utf8', mode: 0o755 });
-fs.writeFileSync('e:/jimpitan/Jalankan Jimpitan.desktop', desktopEntry, { encoding: 'utf8', mode: 0o755 });
-fs.writeFileSync('e:/jimpitan/install-service-otomatis.sh', serviceScript, { encoding: 'utf8', mode: 0o755 });
-fs.writeFileSync('e:/jimpitan/PANDUAN_LINUX.txt', readmeTxt, { encoding: 'utf8' });
+// Tulis file ke root project dan juga ke e:/jimpitan jika tersedia
+const rootDir = path.resolve(__dirname, '../../');
+const targetDirs = [rootDir];
+if (fs.existsSync('e:/jimpitan')) {
+  targetDirs.push('e:/jimpitan');
+}
 
-console.log('Semua file konfigurasi & script Linux berhasil dibuat di e:/jimpitan/');
+for (const dir of targetDirs) {
+  fs.writeFileSync(path.join(dir, 'jalankan-di-linux.sh'), bashScript, { encoding: 'utf8', mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'Jalankan Jimpitan.desktop'), desktopEntry, { encoding: 'utf8', mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'install-service-otomatis.sh'), serviceScript, { encoding: 'utf8', mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'PANDUAN_LINUX.txt'), readmeTxt, { encoding: 'utf8' });
+  console.log(`Semua file konfigurasi & script Linux berhasil disinkronkan ke: ${dir}`);
+}

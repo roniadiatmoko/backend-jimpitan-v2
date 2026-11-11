@@ -2,7 +2,7 @@ const { getRekapByPeriode, upsertRekap, getSaldoTerkini } = require("./model");
 
 const BULAN_RE = /^\d{2}$/;
 const TAHUN_RE = /^\d{4}$/;
-const SECRET_KEY = "rahasiakita123";
+const SECRET_KEY = process.env.API_SECRET_KEY || "rahasiakita123";
 
 async function simpanRekap(req, res, next) {
   try {

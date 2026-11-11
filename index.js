@@ -10,9 +10,11 @@ const hitungUlangRouter = require("./src/features/hitung_ulang_jimpitan_harian/r
 const laporanRouter = require("./src/features/laporan/routes");
 const presensiRondaRouter = require("./src/features/presensi-ronda/routes");
 const rekapRouter = require("./src/features/rekap/routes");
+const { savePresensiRonda } = require("./src/features/presensi-ronda/model");
 
 // Import fungsi dari db.js
 const {
+  db,
   ambilSemuaData,
   ambilJimpitanPerBulan,
   hapusDanSimpanJimpitanHarian,
@@ -37,6 +39,16 @@ const {
 } = require("./db");
 
 const {
+  getUserByUsername,
+  verifyPassword,
+  hashPassword,
+  updateUserPasswordHash,
+  updatePassword,
+  listUsers,
+  parseAdminUsersEnv,
+} = require("./src/features/auth/userModel");
+
+const {
   startBot,
   kirimTesWhatsApp,
   kirimLaporanWhatsApp,
@@ -59,6 +71,7 @@ const { wakeLayerbase } = require("./src/utils/postgresMirror");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const API_SECRET_KEY = process.env.API_SECRET_KEY || "rahasiakita123";
 
 console.log(">>> Memulai server...");
 app.use(cors());
@@ -76,6 +89,111 @@ app.get("/", (req, res) => {
 app.get("/ping", (req, res) => {
   console.log(">>> Menerima ping UptimeRobot, server tetap aktif.");
   res.status(200).send("Server is alive!");
+});
+
+// Endpoint autentikasi login admin pengurus (didukung tabel database users & hash scrypt)
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ status: "ERROR", message: "Username dan kata sandi wajib diisi." });
+    }
+
+    const cleanUsername = username.trim();
+    const cleanPassword = password.trim();
+
+    // 1. Cek di tabel database users
+    const user = await getUserByUsername(db, cleanUsername);
+    if (user) {
+      const isValid = verifyPassword(cleanPassword, user.password_hash);
+      if (isValid) {
+        // Otomatis upgrade ke hash scrypt jika masih plain-text
+        if (!user.password_hash.startsWith("scrypt$")) {
+          const newHash = hashPassword(cleanPassword);
+          await updateUserPasswordHash(db, user.id, newHash);
+        }
+
+        return res.json({
+          status: "OK",
+          token: "true",
+          user: {
+            id: user.id,
+            username: user.username,
+            fullname: user.fullname,
+            role: user.role,
+          },
+        });
+      }
+    }
+
+    // 2. Fail-safe fallback ke .env ADMIN_USERS jika db bermasalah atau user belum ter-seed
+    const envAccounts = parseAdminUsersEnv();
+    const matchedEnv = envAccounts.find(
+      (acc) => acc.username === cleanUsername && acc.password === cleanPassword
+    );
+
+    if (matchedEnv) {
+      return res.json({
+        status: "OK",
+        token: "true",
+        user: {
+          username: matchedEnv.username,
+          fullname: matchedEnv.fullname,
+          role: matchedEnv.role,
+        },
+      });
+    }
+
+    return res.status(401).json({
+      status: "UNAUTHORIZED",
+      message: "Username atau kata sandi salah. Coba lagi.",
+    });
+  } catch (err) {
+    console.error("Error saat autentikasi admin:", err);
+    return res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+// Endpoint ganti kata sandi pengurus
+app.post("/api/auth/change-password", async (req, res) => {
+  try {
+    const { username, currentPassword, newPassword } = req.body || {};
+    if (!username || !currentPassword || !newPassword) {
+      return res.status(400).json({ status: "ERROR", message: "Semua kolom kata sandi wajib diisi." });
+    }
+
+    if (newPassword.trim().length < 4) {
+      return res.status(400).json({ status: "ERROR", message: "Kata sandi baru minimal 4 karakter." });
+    }
+
+    const cleanUsername = username.trim();
+    const user = await getUserByUsername(db, cleanUsername);
+    if (!user) {
+      return res.status(404).json({ status: "ERROR", message: "Akun pengurus tidak ditemukan di database." });
+    }
+
+    const isValid = verifyPassword(currentPassword.trim(), user.password_hash);
+    if (!isValid) {
+      return res.status(400).json({ status: "ERROR", message: "Kata sandi saat ini tidak sesuai." });
+    }
+
+    await updatePassword(db, cleanUsername, newPassword.trim());
+    return res.json({ status: "OK", message: "Kata sandi berhasil diperbarui." });
+  } catch (err) {
+    console.error("Error change password:", err);
+    return res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+// Endpoint melihat daftar akun pengurus (tanpa hash password)
+app.get("/api/auth/users", async (req, res) => {
+  try {
+    const users = await listUsers(db);
+    return res.json({ status: "OK", data: users });
+  } catch (err) {
+    console.error("Error list users:", err);
+    return res.status(500).json({ status: "ERROR", message: err.message });
+  }
 });
 
 // Endpoint untuk mengambil semua data
@@ -145,9 +263,9 @@ function ensureBotStarted() {
 // Endpoint untuk menyimpan data + kirim laporan WA otomatis
 app.post("/api/jimpitan", async (req, res) => {
   try {
-    const { secret_key, tanggal, diambil_oleh, data } = req.body;
+    const { secret_key, tanggal, diambil_oleh, data, personil_ronda } = req.body;
 
-    if (secret_key !== "rahasiakita123") {
+    if (secret_key !== API_SECRET_KEY) {
       return res.status(401).json({ status: "UNAUTHORIZED" });
     }
 
@@ -156,6 +274,16 @@ app.post("/api/jimpitan", async (req, res) => {
     }
 
     await hapusDanSimpanJimpitanHarian(tanggal, diambil_oleh, data);
+
+    // Fitur 1-Klik: Simpan otomatis presensi personil ronda jika dikirim bersamaan
+    if (Array.isArray(personil_ronda)) {
+      try {
+        await savePresensiRonda(tanggal, personil_ronda);
+        console.log(`[POST /api/jimpitan] 1-Klik: Tersimpan ${personil_ronda.length} personil ronda untuk ${tanggal}`);
+      } catch (presensiErr) {
+        console.error("[POST /api/jimpitan] Gagal simpan presensi ronda:", presensiErr.message);
+      }
+    }
 
     // Pastikan bot nyala, tapi hanya sekali
     ensureBotStarted();
@@ -296,7 +424,7 @@ app.post("/api/kirim-whatsapp", async (req, res) => {
   try {
     const { secret_key, pesan, no_hp } = req.body;
 
-    if (secret_key !== "rahasiakita123") {
+    if (secret_key !== API_SECRET_KEY) {
       return res.status(401).json({ status: "UNAUTHORIZED" });
     }
 
@@ -332,6 +460,7 @@ app.get("/api/whatsapp/status", async (req, res) => {
       data: {
         ...status,
         qr_url: qrUrl,
+        env: process.env.ENV || (process.env.NODE_ENV === "production" ? "production" : "dev"),
       },
     });
   } catch (err) {
@@ -510,7 +639,7 @@ app.post("/api/rapel", async (req, res) => {
   try {
     const { secret_key, nomor_rumah, nominal, bulan } = req.body;
 
-    if (secret_key !== "rahasiakita123") {
+    if (secret_key !== API_SECRET_KEY) {
       return res.status(401).json({ status: "UNAUTHORIZED" });
     }
 
@@ -579,6 +708,97 @@ app.post("/api/rapel", async (req, res) => {
     });
   } catch (err) {
     console.error("Error saat mencatat rapel:", err);
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+// Endpoint POST untuk pembayaran rapel multi-bulan (diurutkan kronologis dari bulan terlama ke terbaru)
+app.post("/api/rapel/bayar-multi-bulan", async (req, res) => {
+  try {
+    const { secret_key, nomor_rumah, nominal, daftar_bulan } = req.body;
+
+    if (secret_key !== API_SECRET_KEY) {
+      return res.status(401).json({ status: "UNAUTHORIZED" });
+    }
+
+    const nominalNum = Number(nominal) || 0;
+    if (nominalNum < 500) {
+      return res.status(400).json({
+        status: "ERROR",
+        message: "Nominal pembayaran minimal Rp 500 (1 hari jimpitan).",
+      });
+    }
+
+    if (!Array.isArray(daftar_bulan) || daftar_bulan.length === 0) {
+      return res.status(400).json({
+        status: "ERROR",
+        message: "Pilih setidaknya satu bulan untuk pembayaran rapel.",
+      });
+    }
+
+    const { getHitungKekurangan } = require("./src/features/laporan/model");
+    let sisaHariBayar = Math.floor(nominalNum / 500);
+    const totalHariAwal = sisaHariBayar;
+    const hasilPerBulan = [];
+    const semuaTanggalDisimpan = [];
+
+    // Urutkan daftar bulan secara kronologis (misal: "2026-09", "2026-10")
+    const sortedBulan = [...daftar_bulan].sort();
+
+    for (const bln of sortedBulan) {
+      if (sisaHariBayar <= 0) break;
+
+      const dataBulan = await getHitungKekurangan(bln);
+      const rowRumah = dataBulan.find((r) => String(r.nomor_rumah) === String(nomor_rumah));
+      const hariKurangList = rowRumah?.tanggal_kurang || [];
+
+      if (hariKurangList.length === 0) {
+        hasilPerBulan.push({
+          bulan: bln,
+          status: "SUDAH_LUNAS",
+          hari_disimpan: 0,
+          nominal_disimpan: 0,
+          sisa_hari_belum_lunas: 0,
+          sisa_nominal_belum_lunas: 0,
+        });
+        continue;
+      }
+
+      const alokasiHari = Math.min(sisaHariBayar, hariKurangList.length);
+      const tanggalSimpan = hariKurangList.slice(0, alokasiHari);
+
+      for (const tgl of tanggalSimpan) {
+        await simpanRapelHarian(nomor_rumah, tgl);
+        semuaTanggalDisimpan.push(tgl);
+      }
+
+      sisaHariBayar -= alokasiHari;
+      const sisaHariBulanIni = hariKurangList.length - alokasiHari;
+
+      hasilPerBulan.push({
+        bulan: bln,
+        status: sisaHariBulanIni === 0 ? "LUNAS" : "SEBAGIAN",
+        hari_disimpan: alokasiHari,
+        nominal_disimpan: alokasiHari * 500,
+        sisa_hari_belum_lunas: sisaHariBulanIni,
+        sisa_nominal_belum_lunas: sisaHariBulanIni * 500,
+      });
+    }
+
+    const totalHariDisimpan = totalHariAwal - sisaHariBayar;
+    const kelebihanNominal = sisaHariBayar * 500;
+
+    res.json({
+      status: "OK",
+      message: `Berhasil mencatat pembayaran rapel ${totalHariDisimpan} hari (Rp ${new Intl.NumberFormat("id-ID").format(totalHariDisimpan * 500)}) untuk rumah No. ${nomor_rumah}.`,
+      total_hari_disimpan: totalHariDisimpan,
+      total_nominal_disimpan: totalHariDisimpan * 500,
+      kelebihan_nominal: kelebihanNominal,
+      hasil_per_bulan: hasilPerBulan,
+      tanggal_disimpan: semuaTanggalDisimpan,
+    });
+  } catch (err) {
+    console.error("Error saat mencatat rapel multi bulan:", err);
     res.status(500).json({ status: "ERROR", message: err.message });
   }
 });
@@ -848,6 +1068,32 @@ app.use("/api/ronda", presensiRondaRouter);
 
 // rekap saldo bulanan
 app.use("/api", rekapRouter);
+
+// Modul Keuangan Rumah Pribadi (Terpisah dari Kas Jimpitan Warga)
+const keuanganRumahRouter = require("./src/features/keuangan-rumah/routes");
+app.use("/api/keuangan-rumah", keuanganRumahRouter);
+
+// System Update & Info API
+const { getSystemInfo, executeSelfUpdate } = require("./src/services/systemUpdateService");
+
+app.get("/api/system/info", async (req, res) => {
+  try {
+    const info = await getSystemInfo();
+    res.json({ status: "OK", ...info });
+  } catch (err) {
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
+
+app.post("/api/system/update", async (req, res) => {
+  try {
+    console.log(">>> Menerima request pembaruan sistem (self-update)...");
+    const result = await executeSelfUpdate();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ status: "ERROR", message: err.message });
+  }
+});
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server berjalan di http://0.0.0.0:${PORT}`);

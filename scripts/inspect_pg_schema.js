@@ -1,10 +1,12 @@
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 const { Pool } = require('pg');
+
 const pool = new Pool({
-  host: 'jimpitan-made-river.sage.cloud.layerbase.dev',
-  port: 5432,
-  user: 'layerbase',
-  password: 'xGSCAhaG6kQtq5P8na3HbS04',
-  database: 'jimpitan',
+  host: process.env.PGHOST,
+  port: Number(process.env.PGPORT || 5432),
+  user: process.env.PGUSER,
+  password: process.env.PGPASSWORD,
+  database: process.env.PGDATABASE,
   ssl: { rejectUnauthorized: false }
 });
 

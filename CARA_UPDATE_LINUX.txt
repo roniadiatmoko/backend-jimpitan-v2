@@ -1,0 +1,36 @@
+===================================================================
+ CARA UPDATE JIMPITAN DI LAPTOP LINUX MINT
+===================================================================
+
+A. PEMBARUAN PERTAMA KALI (JALANKAN DI TERMINAL LINUX MINT):
+------------------------------------------------------------
+Buka Terminal di Linux Mint, lalu copy-paste perintah ini:
+
+cd ~/jimpitan/backend && git pull origin main
+cd ~/jimpitan/frontend && git pull origin main && npm run build
+
+Setelah itu restart server:
+- Jika memakai Service Otomatis (Systemd):
+  sudo systemctl restart jimpitan-backend jimpitan-frontend
+
+- Jika menjalankan manual via jalankan-di-linux.sh:
+  Tutup terminal lama atau tekan Ctrl+C, lalu jalankan ulang:
+  cd ~/jimpitan && bash jalankan-di-linux.sh
+
+
+B. PEMBARUAN BERIKUTNYA DI MASA DEPAN (LEBIH MUDAH):
+---------------------------------------------------
+Setelah pembaruan pertama di atas selesai, untuk update fitur
+di masa depan Anda TIDAK PERLU KETIK TERMINAL LAGI.
+
+Pilih salah satu:
+Cara 1 (Dari Web Browser, bisa dari HP/Laptop manapun):
+  1. Buka menu Admin Jimpitan: https://jimpitan-gbk.roniadiatmoko.my.id
+  2. Buka menu sidebar: "Update Aplikasi"
+  3. Klik tombol: "Perbarui Aplikasi & Restart Server"
+  Semua git pull, build, dan restart akan berjalan sendiri.
+
+Cara 2 (Dari Terminal Linux Mint):
+  cd ~/jimpitan/backend && bash update-aplikasi.sh
+
+===================================================================
