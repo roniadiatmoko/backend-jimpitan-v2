@@ -34,69 +34,7 @@ const {
 } = require("../features/keuangan-rumah/model");
 
 const apiKey = process.env.GEMINI_API_KEY;
-const CANDIDATE_MODELS = [
-  process.env.GEMINI_MODEL,
-  "gemini-3.5-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-].filter(Boolean);
-
-let activeWorkingModel = CANDIDATE_MODELS[0] || "gemini-3.5-flash-lite";
-let lastGeminiDebug = null;
-
-async function postToGemini(payload) {
-  if (!apiKey) {
-    lastGeminiDebug = { error: "GEMINI_API_KEY belum diset di file .env" };
-    return null;
-  }
-
-  const modelsToTry = [
-    activeWorkingModel,
-    ...CANDIDATE_MODELS.filter((m) => m !== activeWorkingModel)
-  ];
-
-  for (const m of modelsToTry) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`;
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const json = await res.json();
-      if (res.ok && json.candidates && json.candidates[0]) {
-        activeWorkingModel = m;
-        lastGeminiDebug = { status: "OK", model: m };
-        return { json, model: m };
-      }
-
-      console.warn(`[AI] Percobaan model '${m}' gagal (HTTP ${res.status}):`, JSON.stringify(json.error || json).slice(0, 200));
-      lastGeminiDebug = {
-        status: "FAILED",
-        model: m,
-        httpStatus: res.status,
-        error: json.error || json
-      };
-    } catch (e) {
-      console.warn(`[AI] Percobaan model '${m}' network error:`, e.message);
-      lastGeminiDebug = { status: "NETWORK_ERROR", model: m, error: e.message };
-    }
-  }
-
-  return null;
-}
-
-function getLastGeminiDebug() {
-  return {
-    ...lastGeminiDebug,
-    activeWorkingModel,
-    candidateModels: CANDIDATE_MODELS,
-    hasApiKey: Boolean(apiKey),
-    apiKeyPrefix: apiKey ? apiKey.slice(0, 8) + "..." : null,
-  };
-}
+const modelName = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
 // In-memory conversation history: senderJid -> [{ role, parts }]
 const conversationMemory = new Map();
@@ -1618,20 +1556,27 @@ Aturan Penulisan Pesan WhatsApp:
     history = history.slice(-6);
   }
 
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+
   try {
     // Call 1: Kirim pesan ke Gemini dengan tools
-    const res1 = await postToGemini({
-      contents: history,
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      tools: toolDeclarations,
+    let res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: history,
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        tools: toolDeclarations,
+      })
     });
 
-    if (!res1 || !res1.json || !res1.json.candidates || !res1.json.candidates[0]) {
-      console.error("[AI] Call 1 gagal. Debug:", JSON.stringify(getLastGeminiDebug()));
+    let json = await res.json();
+    if (!json.candidates || !json.candidates[0]) {
+      console.error("[AI] Error response dari Gemini:", JSON.stringify(json));
       return null;
     }
 
-    const modelContent = res1.json.candidates[0].content;
+    const modelContent = json.candidates[0].content;
     const fnPart = modelContent.parts.find((p) => p.functionCall);
 
     // Jika Gemini memutuskan memanggil tool database
@@ -1661,18 +1606,23 @@ Aturan Penulisan Pesan WhatsApp:
       });
 
       // Call 2: Minta Gemini merapikan output ke teks bahasa manusia
-      const res2 = await postToGemini({
-        contents: history,
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        tools: toolDeclarations,
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: history,
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          tools: toolDeclarations,
+        })
       });
 
-      if (!res2 || !res2.json || !res2.json.candidates || !res2.json.candidates[0]) {
-        console.error("[AI] Call 2 error. Debug:", JSON.stringify(getLastGeminiDebug()));
+      json = await res.json();
+      if (!json.candidates || !json.candidates[0]) {
+        console.error("[AI] Call 2 error:", JSON.stringify(json));
         return null;
       }
 
-      const replyText = extractTextFromParts(res2.json.candidates[0].content?.parts);
+      const replyText = extractTextFromParts(json.candidates[0].content?.parts);
 
       if (replyText) {
         history.push({
@@ -1698,7 +1648,6 @@ Aturan Penulisan Pesan WhatsApp:
     return null;
   } catch (err) {
     console.error("[AI] Error prosesPesanDenganAI:", err);
-    lastGeminiDebug = { status: "EXCEPTION", error: err.message, stack: err.stack };
     return null;
   }
 }
@@ -1711,5 +1660,4 @@ async function prosesPesanDenganAI(pesanTeks, senderJid, actualSenderJid, extraI
 module.exports = {
   prosesPesanDenganAI,
   executeTool,
-  getLastGeminiDebug,
 };
