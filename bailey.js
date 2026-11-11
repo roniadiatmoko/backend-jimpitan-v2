@@ -263,17 +263,11 @@ async function startBot() {
           null;
 
         const mentionedJids = Array.isArray(contextInfo?.mentionedJid) ? contextInfo.mentionedJid : [];
-        const quotedParticipant = contextInfo?.participant || "";
-
-        const isBotMentioned =
-          (botPhone && mentionedJids.some((j) => j.includes(botPhone))) ||
-          (botLid && mentionedJids.some((j) => j.includes(botLid))) ||
-          (botPhone && cleanText.includes(botPhone)) ||
-          (quotedParticipant && botPhone && quotedParticipant.includes(botPhone)) ||
-          (quotedParticipant && botLid && quotedParticipant.includes(botLid));
 
         let groupSubject = "";
         let isFamilyGroup = false;
+        let isBotMentioned = false;
+        let isBotQuoted = false;
 
         if (isGroup) {
           groupSubject = await getGroupSubject(remoteJid);
@@ -285,52 +279,37 @@ async function startBot() {
             subLower.includes("pengeluaran") ||
             subLower.includes("dapur");
 
+          // Aturan ketat di grup: Bot HANYA merespon jika dimention atau di quote-reply
           const lower = cleanText.toLowerCase();
-          const isTriggered =
-            isBotMentioned ||
-            isFamilyGroup ||
-            lower.includes("@bot") ||
-            lower.includes("nara") ||
-            // Jimpitan & Ronda
-            lower.includes("jimpitan") ||
-            lower.includes("kas ") ||
-            lower.includes("tagihan") ||
-            lower.includes("kekurangan") ||
-            lower.includes("rapel") ||
-            lower.includes("setor") ||
-            lower.includes("hitung ulang") ||
-            lower.includes("bayar") ||
-            lower.includes("ronda") ||
-            // Keuangan Rumah Tangga
-            lower.includes("keuangan") ||
-            lower.includes("rumah tangga") ||
-            lower.includes("pengeluaran") ||
-            lower.includes("pemasukan") ||
-            lower.includes("belanja") ||
-            lower.includes("beli") ||
-            lower.includes("dapur") ||
-            lower.includes("bensin") ||
-            lower.includes("listrik") ||
-            lower.includes("token") ||
-            lower.includes("wifi") ||
-            lower.includes("pulsa") ||
-            lower.includes("galon") ||
-            lower.includes("gas ") ||
-            lower.includes("catat") ||
-            lower.includes("rekap") ||
-            lower.includes("saldo") ||
-            // Konfirmasi & Jawaban Singkat
-            lower === "ya" ||
-            lower === "oke" ||
-            lower === "ok" ||
-            lower === "simpan" ||
-            lower === "batal" ||
-            lower === "1" ||
-            lower === "2" ||
-            lower === "iya" ||
-            lower === "lanjut";
 
-          if (!isTriggered) return;
+          // 1. Cek apakah bot di-mention secara native atau di teks
+          isBotMentioned =
+            (botPhone && mentionedJids.some((j) => j.includes(botPhone))) ||
+            (botLid && mentionedJids.some((j) => j.includes(botLid))) ||
+            (botPhone && cleanText.includes(botPhone)) ||
+            lower.includes("@nara") ||
+            lower.includes("@bot") ||
+            lower.startsWith("nara,") ||
+            lower.startsWith("nara ") ||
+            lower === "nara";
+
+          // 2. Cek apakah pesan membalas (quote-reply) pesan dari bot
+          const rawQuotedParticipant = contextInfo?.participant || "";
+          const quotedDigits = rawQuotedParticipant.split("@")[0].split(":")[0].replace(/\D/g, "");
+          isBotQuoted = Boolean(
+            contextInfo?.quotedMessage &&
+            (
+              (botPhone && (quotedDigits.includes(botPhone) || rawQuotedParticipant.includes(botPhone) || (botPhone.length > 8 && quotedDigits.endsWith(botPhone.slice(-8))))) ||
+              (botLid && (quotedDigits.includes(botLid) || rawQuotedParticipant.includes(botLid))) ||
+              (sock?.user?.id && rawQuotedParticipant.startsWith(sock.user.id.split(":")[0]))
+            )
+          );
+
+          const isTriggered = isBotMentioned || isBotQuoted;
+
+          if (!isTriggered) {
+            return;
+          }
         }
 
         // Format pesan untuk AI: jika ada mention nomor bot, gantikan dengan nama Nara agar AI paham
