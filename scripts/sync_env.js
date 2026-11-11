@@ -24,7 +24,7 @@ if (!fs.existsSync(examplePath)) {
 const KNOWN_DEFAULTS = {
   ADMIN_PHONE_NUMBER: "6289673378055",
   FAMILY_PHONE_IBU: "6285867402287",
-  GEMINI_MODEL: "gemini-2.5-flash",
+  GEMINI_MODEL: "gemini-3.5-flash-lite",
   KEUANGAN_RUMAH_PINS: "1234,5678",
   API_SECRET_KEY: "rahasiakita123",
   ADMIN_USERS: "admin:passwordadmin:Administrator",
@@ -53,7 +53,7 @@ function isDummyValue(key, val) {
   if (!val) return true;
   if (key === "ADMIN_PHONE_NUMBER" && (val.includes("000000") || val.length < 8)) return true;
   if (key === "FAMILY_PHONE_IBU" && (val.includes("000000") || val.length < 8)) return true;
-  if (key === "GEMINI_MODEL" && (val.includes("3.5") || val === "")) return true;
+  if (key === "GEMINI_MODEL" && (val.includes("Contoh") || val === "")) return true;
   return false;
 }
 

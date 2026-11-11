@@ -108,7 +108,21 @@ async function seedDefaultUsers(sqliteDb) {
                 console.log(`[Auth] Berhasil membuat akun awal: ${def.username} (${def.fullname}) [ID: ${this.lastID}]`);
                 // Mirror ke PostgreSQL
                 const newId = this.lastID;
-                enqueueMirror(`users seed ${def.username}`, (pool) => {
+                enqueueMirror(`users seed ${def.username}`, async (pool) => {
+                  try {
+                    await pool.query(`
+                      CREATE TABLE IF NOT EXISTS "users" (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR(100) UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        fullname VARCHAR(200),
+                        role VARCHAR(50) DEFAULT 'admin',
+                        created_at VARCHAR(100),
+                        updated_at VARCHAR(100)
+                      );
+                      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON "users"(username);
+                    `);
+                  } catch (e) {}
                   return pool.query(
                     `INSERT INTO "users" (id, username, password_hash, fullname, role, created_at, updated_at)
                      VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -170,7 +184,20 @@ function updatePassword(sqliteDb, username, newPassword) {
         }
 
         // Mirror ke PostgreSQL
-        enqueueMirror(`users update password ${username}`, (pool) => {
+        enqueueMirror(`users update password ${username}`, async (pool) => {
+          try {
+            await pool.query(`
+              CREATE TABLE IF NOT EXISTS "users" (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                fullname VARCHAR(200),
+                role VARCHAR(50) DEFAULT 'admin',
+                created_at VARCHAR(100),
+                updated_at VARCHAR(100)
+              );
+            `);
+          } catch (e) {}
           return pool.query(
             `UPDATE "users" SET password_hash = $1, updated_at = $2 WHERE username = $3`,
             [hashedPassword, now, username.trim()]
