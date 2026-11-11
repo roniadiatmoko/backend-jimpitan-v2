@@ -13,6 +13,7 @@ const { buildLaporanHarianText } = require("./src/utils/laporanHarianText");
 const logger = P({ level: "warn" });
 const msgRetryCounterCache = new NodeCache({ stdTTL: 3600, useClones: false });
 const messageStore = new NodeCache({ stdTTL: 24 * 3600, useClones: false });
+const groupMetaCache = new NodeCache({ stdTTL: 3600, useClones: false });
 
 const AUTH_PATH = path.join(__dirname, "baileys_auth_info");
 
@@ -21,6 +22,20 @@ let latestQr = null;
 let starting = false;
 let isConnected = false;
 let connectionCallbacks = [];
+
+async function getGroupSubject(jid) {
+  if (!jid || !jid.endsWith("@g.us") || !sock) return "";
+  const cached = groupMetaCache.get(jid);
+  if (cached) return cached;
+  try {
+    const meta = await sock.groupMetadata(jid);
+    if (meta && meta.subject) {
+      groupMetaCache.set(jid, meta.subject);
+      return meta.subject;
+    }
+  } catch (e) {}
+  return "";
+}
 
 // Helper untuk simpan pesan ke messageStore (diperlukan getMessage saat WhatsApp minta retry)
 function saveMessage(m) {
@@ -213,10 +228,19 @@ async function startBot() {
         const remoteJid = m.key.remoteJid;
         if (!remoteJid || remoteJid === "status@broadcast") return;
 
+        // Unpack pesan sementara / view once jika ada
+        const msgContent =
+          m.message.ephemeralMessage?.message ||
+          m.message.viewOnceMessage?.message ||
+          m.message.viewOnceMessageV2?.message ||
+          m.message.documentWithCaptionMessage?.message ||
+          m.message;
+
         const text =
-          m.message.conversation ||
-          m.message.extendedTextMessage?.text ||
-          m.message.imageMessage?.caption ||
+          msgContent.conversation ||
+          msgContent.extendedTextMessage?.text ||
+          msgContent.imageMessage?.caption ||
+          msgContent.videoMessage?.caption ||
           "";
 
         const cleanText = text.trim();
@@ -227,10 +251,47 @@ async function startBot() {
         const pushName = m.pushName || "";
         const senderPn = m.key?.participantPn || m.key?.remoteJidAlt || m.participantPn || "";
 
+        // Deteksi identitas bot untuk mention WhatsApp
+        const botRawId = sock?.user?.id || "";
+        const botPhone = (botRawId.split(":")[0] || "").replace(/\D/g, "") || "6285162866857";
+        const botLid = sock?.user?.lid ? sock.user.lid.split(":")[0].replace(/\D/g, "") : "";
+
+        const contextInfo =
+          msgContent.extendedTextMessage?.contextInfo ||
+          msgContent.imageMessage?.contextInfo ||
+          msgContent.videoMessage?.contextInfo ||
+          null;
+
+        const mentionedJids = Array.isArray(contextInfo?.mentionedJid) ? contextInfo.mentionedJid : [];
+        const quotedParticipant = contextInfo?.participant || "";
+
+        const isBotMentioned =
+          (botPhone && mentionedJids.some((j) => j.includes(botPhone))) ||
+          (botLid && mentionedJids.some((j) => j.includes(botLid))) ||
+          (botPhone && cleanText.includes(botPhone)) ||
+          (quotedParticipant && botPhone && quotedParticipant.includes(botPhone)) ||
+          (quotedParticipant && botLid && quotedParticipant.includes(botLid));
+
+        let groupSubject = "";
+        let isFamilyGroup = false;
+
         if (isGroup) {
+          groupSubject = await getGroupSubject(remoteJid);
+          const subLower = (groupSubject || "").toLowerCase();
+          isFamilyGroup =
+            subLower.includes("rumah tangga") ||
+            subLower.includes("keuangan") ||
+            subLower.includes("keluarga") ||
+            subLower.includes("pengeluaran") ||
+            subLower.includes("dapur");
+
           const lower = cleanText.toLowerCase();
           const isTriggered =
+            isBotMentioned ||
+            isFamilyGroup ||
             lower.includes("@bot") ||
+            lower.includes("nara") ||
+            // Jimpitan & Ronda
             lower.includes("jimpitan") ||
             lower.includes("kas ") ||
             lower.includes("tagihan") ||
@@ -239,16 +300,46 @@ async function startBot() {
             lower.includes("setor") ||
             lower.includes("hitung ulang") ||
             lower.includes("bayar") ||
-            lower.includes("nara") ||
+            lower.includes("ronda") ||
+            // Keuangan Rumah Tangga
+            lower.includes("keuangan") ||
+            lower.includes("rumah tangga") ||
+            lower.includes("pengeluaran") ||
+            lower.includes("pemasukan") ||
+            lower.includes("belanja") ||
+            lower.includes("beli") ||
+            lower.includes("dapur") ||
+            lower.includes("bensin") ||
+            lower.includes("listrik") ||
+            lower.includes("token") ||
+            lower.includes("wifi") ||
+            lower.includes("pulsa") ||
+            lower.includes("galon") ||
+            lower.includes("gas ") ||
+            lower.includes("catat") ||
+            lower.includes("rekap") ||
+            lower.includes("saldo") ||
+            // Konfirmasi & Jawaban Singkat
             lower === "ya" ||
             lower === "oke" ||
             lower === "ok" ||
             lower === "simpan" ||
-            lower === "batal";
+            lower === "batal" ||
+            lower === "1" ||
+            lower === "2" ||
+            lower === "iya" ||
+            lower === "lanjut";
+
           if (!isTriggered) return;
         }
 
-        console.log(`[WA Chat Masuk dari ${remoteJid} (Sender: ${senderJid}, PN: ${senderPn || "-"}, PushName: ${pushName || "-"})]: "${cleanText}"`);
+        // Format pesan untuk AI: jika ada mention nomor bot, gantikan dengan nama Nara agar AI paham
+        let aiInputText = cleanText;
+        if (botPhone) {
+          aiInputText = aiInputText.replace(new RegExp(`@${botPhone}\\b`, "g"), "@Nara").trim();
+        }
+
+        console.log(`[WA Chat Masuk dari ${remoteJid} (Sender: ${senderJid}, PN: ${senderPn || "-"}, PushName: ${pushName || "-"}, Group: ${groupSubject || (isGroup ? "Group" : "Private")})]: "${cleanText}"`);
 
         // Typing indicator
         try {
@@ -256,10 +347,13 @@ async function startBot() {
         } catch (e) {}
 
         const { prosesPesanDenganAI } = require("./src/services/aiService");
-        const reply = await prosesPesanDenganAI(cleanText, remoteJid, senderJid, {
+        const reply = await prosesPesanDenganAI(aiInputText, remoteJid, senderJid, {
           pushName,
           senderPn,
-          isGroup
+          isGroup,
+          groupSubject,
+          isFamilyGroup,
+          isBotMentioned
         });
 
         try {

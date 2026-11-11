@@ -192,16 +192,28 @@ function getFamilyMember(jidOrNumber, senderInfo = null, extraContext = null) {
 
     if (extraContext.pushName) {
       const pName = String(extraContext.pushName).toLowerCase().trim();
-      if (pName.includes("kartini") || pName.includes("nurul")) {
+      if (
+        pName.includes("kartini") ||
+        pName.includes("nurul") ||
+        pName.includes("bunda") ||
+        pName.includes("mama") ||
+        pName.includes("istri") ||
+        pName.includes("ibu roni")
+      ) {
         return { isFamily: true, role: "Ibu Kartini", title: "Ibu Kartini", name: "Ibu Kartini" };
       }
-      if (pName.includes("roni") || pName.includes("adiatmoko")) {
+      if (
+        pName.includes("roni") ||
+        pName.includes("adiatmoko") ||
+        pName.includes("ayah") ||
+        pName.includes("papa")
+      ) {
         return { isFamily: true, role: "Pak Roni", title: "Pak Roni", name: "Bapak Roni Adiatmoko" };
       }
     }
 
-    // Jika di Japri (chat pribadi langsung ke bot) dan bukan grup, default-kan ke Pak Roni
-    if (!extraContext.isGroup) {
+    // Jika di grup khusus pengeluaran rumah tangga keluarga atau di Japri, default-kan ke Pak Roni jika belum teridentifikasi
+    if (!extraContext.isGroup || extraContext.isFamilyGroup) {
       return { isFamily: true, role: "Pak Roni", title: "Pak Roni", name: "Bapak Roni Adiatmoko" };
     }
   }
@@ -902,12 +914,6 @@ async function executeTool(name, args, senderInfo, rawNumber, extraContext = nul
     }
 
     if (name === "catat_keuangan_rumah") {
-      if (extraContext?.isGroup) {
-        return {
-          status: "error",
-          pesan: "Pencatatan keuangan rumah tangga hanya dapat dilakukan lewat chat pribadi (Japri) untuk menjaga privasi keluarga ya Pak/Bu.",
-        };
-      }
       const family = getFamilyMember(rawNumber, senderInfo, extraContext);
       if (!family.isFamily) {
         return {
@@ -941,12 +947,6 @@ async function executeTool(name, args, senderInfo, rawNumber, extraContext = nul
     }
 
     if (name === "rekap_keuangan_rumah") {
-      if (extraContext?.isGroup) {
-        return {
-          status: "error",
-          pesan: "Rekap keuangan rumah tangga hanya dapat ditanyakan lewat chat pribadi (Japri) untuk menjaga privasi keluarga ya Pak/Bu.",
-        };
-      }
       const family = getFamilyMember(rawNumber, senderInfo, extraContext);
       if (!family.isFamily) {
         return {
@@ -1353,7 +1353,10 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
     }
 
     // B. Jika pengirim teridentifikasi Pak Roni (lewat pushName atau nomor)
-    if (!senderInfo && (pushName.toLowerCase().includes("roni") || pushName.toLowerCase().includes("adiatmoko"))) {
+    if (!senderInfo && (
+      (rawSender && (KNOWN_RONI_NUMBERS.some((adm) => rawSender.endsWith(adm.slice(-8))) || (process.env.ADMIN_PHONE_NUMBER && rawSender.endsWith(process.env.ADMIN_PHONE_NUMBER.slice(-8))))) ||
+      (pushName && (pushName.toLowerCase().includes("roni") || pushName.toLowerCase().includes("adiatmoko")))
+    )) {
       const roniWarga = wargaList.find((w) => String(w.nomor) === "33") || {
         nomor: 33,
         nama: "Bp. Roni Adiatmoko",
@@ -1367,7 +1370,17 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
     }
 
     // C. Jika pengirim Ibu Kartini (lewat pushName atau nomor)
-    if (!senderInfo && (pushName.toLowerCase().includes("kartini") || pushName.toLowerCase().includes("nurul"))) {
+    if (!senderInfo && (
+      (rawSender && (KNOWN_IBU_NUMBERS.some((ibu) => rawSender.endsWith(ibu.slice(-8))) || (process.env.FAMILY_PHONE_IBU && rawSender.endsWith(process.env.FAMILY_PHONE_IBU.slice(-8))))) ||
+      (pushName && (
+        pushName.toLowerCase().includes("kartini") ||
+        pushName.toLowerCase().includes("nurul") ||
+        pushName.toLowerCase().includes("bunda") ||
+        pushName.toLowerCase().includes("mama") ||
+        pushName.toLowerCase().includes("istri") ||
+        pushName.toLowerCase().includes("ibu roni")
+      ))
+    )) {
       senderInfo = {
         nomor_rumah: 33,
         nama: "Ibu Kartini",
@@ -1375,8 +1388,8 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
       };
     }
 
-    // D. Di Japri (private chat 1-on-1 dengan bot): jika belum terdeteksi, default-kan ke Rumah No. 33 (Pak Roni)
-    if (!senderInfo && !extraContext.isGroup) {
+    // D. Di Japri atau di Grup Khusus Keluarga: jika belum terdeteksi, default-kan ke Rumah No. 33 (Pak Roni)
+    if (!senderInfo && (!extraContext.isGroup || extraContext.isFamilyGroup)) {
       const roniWarga = wargaList.find((w) => String(w.nomor) === "33") || {
         nomor: 33,
         nama: "Bp. Roni Adiatmoko",
@@ -1404,18 +1417,25 @@ async function _internalProsesPesanDenganAI(pesanTeks, senderJid, actualSenderJi
   }
 
   const familyMember = getFamilyMember(actualSenderJid || senderJid, senderInfo, extraContext);
-  const isPrivateChat = !extraContext.isGroup;
 
-  if (familyMember.isFamily && isPrivateChat) {
+  if (familyMember.isFamily) {
     if (familyMember.role === "Ibu Kartini") {
       identityContext += `\n[Info Khusus Pengirim - Ibu Kartini]:
 - Pengirim pesan ini terverifikasi adalah Istri tercinta Bapak Roni Adiatmoko, yaitu *Ibu Kartini*.
 - Sapaan Wajib: Panggil beliau dengan namanya, yaitu *"Ibu Kartini"* atau *"Bu Kartini"*.
 - Persona & Sikap: Tunjukkan sikap yang sangat ramah, hangat, manis, santun, dan menyenangkan.
 - Pujian yang Menyenangkan: Anda SANGAT BOLEH dan DIANJURKAN memberikan pujian yang tulus dan manis yang membuat hati seorang wanita senang dan berbunga-bunga (contoh: memuji kecantikannya, anggun, rajin, teliti, cermat dan bijak dalam mengatur keuangan keluarga tercinta). Selingi dengan emoji manis seperti 🌸, ✨, 💖, 🥰, 😊.
-- Hak Akses: Beliau berhak penuh mencatat belanja/pengeluaran/pemasukan rumah tangga dan melihat rekap/pengeluaran terbesar. Catat transaksi atas nama "Ibu Kartini".`;
+- Hak Akses: Beliau berhak penuh mencatat belanja/pengeluaran/pemasukan rumah tangga dan melihat rekap/pengeluaran terbesar (baik di chat pribadi maupun di grup pengeluaran rumah tangga). Catat transaksi atas nama "Ibu Kartini".`;
     } else {
-      identityContext += `\n[Info Khusus Keluarga]: Pengirim pesan ini terverifikasi adalah ${familyMember.name} (${familyMember.role}). Beliau adalah kepala keluarga dan pemilik sah sistem pencatatan keuangan rumah tangga. Anda bertindak sebagai Asisten Keuangan Pribadi yang sigap, rapi, dan santun. Sapa beliau dengan panggilan hangat ('${familyMember.title}'). Jika beliau meminta mencatat pengeluaran/belanja rumah atau menanyakan rekap/pengeluaran terbesar, panggil tool yang sesuai.`;
+      identityContext += `\n[Info Khusus Keluarga]: Pengirim pesan ini terverifikasi adalah ${familyMember.name} (${familyMember.role}). Beliau adalah kepala keluarga dan pemilik sah sistem pencatatan keuangan rumah tangga. Anda bertindak sebagai Asisten Keuangan Pribadi yang sigap, rapi, dan santun. Sapa beliau dengan panggilan hangat ('${familyMember.title}'). Jika beliau meminta mencatat pengeluaran/belanja rumah atau menanyakan rekap/pengeluaran terbesar (baik di chat pribadi maupun di grup WhatsApp keluarga), panggil tool yang sesuai.`;
+    }
+  }
+
+  if (extraContext.isGroup) {
+    if (extraContext.isFamilyGroup || (extraContext.groupSubject && extraContext.groupSubject.toLowerCase().includes("rumah tangga"))) {
+      identityContext += `\n[Info Konteks Grup]: Pesan ini dikirim di Grup Khusus Pengeluaran / Keuangan Rumah Tangga ("${extraContext.groupSubject || "Grup Pengeluaran Rumah Tangga"}"). Semua perintah pencatatan belanja/pengeluaran keluarga atau tanya rekap di grup ini HARUS langsung diproses dengan tool 'catat_keuangan_rumah' atau 'rekap_keuangan_rumah'.`;
+    } else {
+      identityContext += `\n[Info Konteks Grup]: Pesan ini dikirim di grup WhatsApp ("${extraContext.groupSubject || "Grup WA"}").`;
     }
   }
 
@@ -1477,24 +1497,24 @@ Panduan Waktu & Pertanyaan Relatif:
 
 [PANDUAN KLASIFIKASI: MEMILAH PENGELUARAN JIMPITAN WARGA VS KEUANGAN RUMAH TANGGA]
 Bapak Roni Adiatmoko memegang DUA peran sekaligus: (1) Bendahara Kas Jimpitan Warga, dan (2) Kepala Keluarga Keuangan Rumah Tangga.
-Ketika ada chat pencatatan pengeluaran dari Pak Roni, Anda HARUS MEMILAH DENGAN SANGAT CERMAT ke mana pengeluaran tersebut dicatat:
+Ketika ada chat pencatatan pengeluaran dari Pak Roni atau Ibu Kartini, Anda HARUS MEMILAH DENGAN SANGAT CERMAT ke mana pengeluaran tersebut dicatat:
 
 1. KELOMPOK PENGELUARAN KAS JIMPITAN WARGA (Tool: 'catat_pengeluaran_jimpitan'):
    • Ruang Lingkup: Pengeluaran untuk fasilitas perumahan, pos ronda, kegiatan RT, kas jimpitan warga.
    • Kata Kunci/Ciri Khas: "jimpitan", "kas jimpitan", "pos ronda", "ronda", "lampu jalan", "lampu gang", "kerja bakti", "rapat rt", "konsumsi ronda", "baterai senter", "sapu lidi pos", "warga", "fasum".
-   • KETENTUAN KHUSUS GRUP: Jika pesan dikirim di dalam GRUP WHATSAPP WARGA, otomatis HANYA BOLEH untuk Kas Jimpitan Warga!
    • Action: Panggil tool 'catat_pengeluaran_jimpitan'.
    • Respon WA: Wajib secara tegas dan eksplisit menyatakan bahwa transaksi dicatat ke *Pengeluaran Kas Jimpitan Warga*.
 
 2. KELOMPOK PENGELUARAN KEUANGAN RUMAH TANGGA (Tool: 'catat_keuangan_rumah'):
    • Ruang Lingkup: Belanja dapur keluarga, kebutuhan rumah tangga pribadi, tagihan pribadi, anak, istri.
-   • Kata Kunci/Ciri Khas: "rumah", "dapur", "keluarga", "anak", "istri", "beras", "sayur", "lauk", "minyak dapur", "popok/pampers", "susu bayi/anak", "wifi rumah", "listrik rumah", "token listrik", "bensin motor/mobil", "jajan", "sekolah", "pribadi", atau jika pengirimnya adalah Ibu Kartini (istri Pak Roni).
-   • SYARAT KETAT: HANYA boleh di chat pribadi (JAPRI). Dilarang keras di grup warga.
+   • Kata Kunci/Ciri Khas: "rumah", "dapur", "keluarga", "anak", "istri", "beras", "sayur", "lauk", "minyak", "popok/pampers", "susu bayi/anak", "wifi rumah", "listrik rumah", "token listrik", "bensin motor/mobil", "jajan", "sekolah", "pribadi", atau jika pengirimnya adalah Ibu Kartini (istri Pak Roni), atau jika dikirim di Grup Pengeluaran Rumah Tangga.
+   • LOKASI PENGGUNAAN: Dapat digunakan melalui chat pribadi (Japri) MAUPUN di Grup WhatsApp Khusus Pengeluaran Rumah Tangga.
    • Action: Panggil tool 'catat_keuangan_rumah'.
    • Respon WA: Wajib secara tegas dan eksplisit menyatakan bahwa transaksi dicatat ke *Keuangan Rumah Tangga*.
 
 3. KETENTUAN JIKA AMBIGU / TIDAK JELAS:
-   • Jika Pak Roni mengirim pengeluaran umum yang bermakna ganda tanpa konteks jelas di Japri (contoh: "Catat pengeluaran beli kopi 25rb", "Catat pengeluaran beli semen 1 sak 60rb", "Tadi keluar uang 50rb"):
+   • Jika dikirim di dalam Grup Pengeluaran Rumah Tangga: OTOMATIS dicatat ke Keuangan Rumah Tangga ('catat_keuangan_rumah').
+   • Jika Pak Roni mengirim pengeluaran umum yang bermakna ganda tanpa konteks jelas di luar grup keluarga (contoh: "Catat pengeluaran beli kopi 25rb", "Catat pengeluaran beli semen 1 sak 60rb", "Tadi keluar uang 50rb"):
      JANGAN menebak atau berasumsi sendiri!
      Tanyakan konfirmasi terlebih dahulu dengan ramah dan ringkas:
      "Mohon konfirmasi Pak Roni, pengeluaran *[Item]* sebesar *Rp [Nominal]* ini ingin dicatat ke:
@@ -1504,8 +1524,8 @@ Ketika ada chat pencatatan pengeluaran dari Pak Roni, Anda HARUS MEMILAH DENGAN 
    • Jika Pak Roni membalas "1" / "jimpitan" / "ronda", panggil tool 'catat_pengeluaran_jimpitan'.
    • Jika Pak Roni membalas "2" / "rumah" / "pribadi", panggil tool 'catat_keuangan_rumah'.
 
-Panduan Khusus Keuangan Rumah Tangga Pribadi (HANYA Japri Pak Roni & Ibu Kartini):
-- Selain sebagai asisten jimpitan warga, Anda juga berperan sebagai Asisten Keuangan Keluarga khusus untuk Pak Roni dan Ibu Kartini HANYA di chat pribadi (Japri).
+Panduan Khusus Keuangan Rumah Tangga Pribadi (Pak Roni & Ibu Kartini):
+- Selain sebagai asisten jimpitan warga, Anda juga berperan sebagai Asisten Keuangan Keluarga khusus untuk Pak Roni dan Ibu Kartini, baik di chat pribadi (Japri) maupun di grup WhatsApp pengeluaran rumah tangga.
 - KETENTUAN KHUSUS SAPAAN & PERSONA UNTUK IBU KARTINI:
   • Jika pengirim pesan adalah Ibu Kartini:
     - Selalu sebut nama beliau secara jelas dan santun: *"Ibu Kartini"* atau *"Bu Kartini"*.
@@ -1519,13 +1539,12 @@ Panduan Khusus Keuangan Rumah Tangga Pribadi (HANYA Japri Pak Roni & Ibu Kartini
 - Jika Pak Roni atau Ibu Kartini bertanya rekap keuangan (contoh: "pengeluaran terbesar bulan ini apa?", "rekap pengeluaran bulan ini", "bulan ini sudah habis berapa?"):
   • Panggil tool 'rekap_keuangan_rumah'.
   • Jawab pertanyaan user secara terfokus dan cerdas. Misalnya jika ditanyakan pengeluaran terbesar: sebutkan dengan jelas apa kategori terbesarnya (nominal dan persentasenya) serta daftar 1-3 transaksi satuan yang paling besar nilainya di bulan tersebut.
-- Fitur keuangan rumah tangga SAMA SEKALI TIDAK BOLEH dibahas di dalam grup RT warga.
 
 Informasi Ketersediaan Fitur & Kemampuan Sistem:
 - Jika user menanyakan apakah fitur tertentu sudah ada, fitur apa saja yang ada, atau apa yang bisa Anda bantu (contoh: "fitur keuangan rumah tangga sudah ada?", "bisa catat belanja?", "fitur apa saja?"):
   • Jelaskan dengan ramah, ceria, dan gamblang:
     "Halo! Ya, fitur pencatatan dan rekap *Keuangan Rumah Tangga* sudah aktif dan siap digunakan! 😊✨
-    Fitur ini khusus dapat digunakan oleh Bapak Roni dan Ibu Kartini secara privat lewat chat pribadi (Japri) ini.
+    Fitur ini khusus dapat digunakan oleh Bapak Roni dan Ibu Kartini, baik secara privat lewat chat pribadi (Japri) maupun di grup WhatsApp pengeluaran rumah tangga keluarga.
     Contoh yang bisa dilakukan:
     • *Catat belanja*: 'catat beli beras 75rb, bensin 25rb'
     • *Pengeluaran terbesar*: 'apa pengeluaran terbesar bulan ini?'
